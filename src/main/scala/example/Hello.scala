@@ -12,6 +12,7 @@ import cats.effect.concurrent.Ref
 import java.util.UUID
 import java.{util => ju}
 import cats.free.FreeApplicative
+import cats.effect.ContextShift
 
 object Workflow {
 
@@ -201,12 +202,18 @@ object WorkflowRuntime {
 
     private val runCompensation: IO[Unit] = rollback.get.flatten
 
-    private def foldIO(tracer: WorkflowTracer): FunctionK[WorkflowOp, IO] =
+    private def foldIO(
+        tracer: WorkflowTracer
+    )(implicit cs: ContextShift[IO]): FunctionK[WorkflowOp, IO] =
       new FunctionK[WorkflowOp, IO] {
         override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
           case step @ Step(_, _, _) => processStep(tracer, step)
           case FromSeq(seq)         => seq.foldMap(foldIO(tracer))
-          case FromPar(par)         => par.foldMap(foldIO(tracer)) //TODO parallelize
+          case FromPar(par) => {
+            val parIO = par
+              .foldMap(foldIO(tracer).andThen(IO.ioParallel.parallel))
+            IO.ioParallel.sequential(parIO)
+          }
         }
       }
 
@@ -222,13 +229,15 @@ object WorkflowRuntime {
       }
     }
 
-    def toIO[A](workflow: Workflow[A]): IO[A] = store.logWorkflowExecution {
-      tracer =>
+    def toIO[A](workflow: Workflow[A])(implicit cs: ContextShift[IO]): IO[A] =
+      store.logWorkflowExecution { tracer =>
         workflow.foldMap(foldIO(tracer))
-    }
+      }
   }
 
-  def run[A](store: WorkflowStore)(workflow: Workflow[A]): IO[A] = for {
+  def run[A](
+      store: WorkflowStore
+  )(workflow: Workflow[A])(implicit cs: ContextShift[IO]): IO[A] = for {
     ref <- Ref.of[IO, IO[Unit]](IO.unit)
     result <- new Run(store, ref).toIO(workflow)
   } yield result
@@ -244,9 +253,17 @@ object Hello extends IOApp {
     step("step 2", IO(println("comment")), IO(println("revert step 2")))
 
   val step31 =
-    parStep("step 3-1", IO(println("va?")), IO(println("revert step 3-1")))
+    parStep(
+      "step 3-1",
+      IO(Thread.sleep(1000)) *> IO(println("va?")),
+      IO(println("revert step 3-1"))
+    )
   val step32 =
-    parStep("step 3-2", IO(println("va?")), IO(println("revert step 3-2")))
+    parStep(
+      "step 3-2",
+      IO(Thread.sleep(2000)) *> IO(println("va?")),
+      IO(println("revert step 3-2"))
+    )
 
   val step4 = step(
     "step 4",
