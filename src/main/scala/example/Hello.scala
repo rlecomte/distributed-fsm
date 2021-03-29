@@ -7,30 +7,50 @@ import cats.free.Free.liftF
 import cats.effect.IOApp
 import cats.effect.ExitCode
 import cats.arrow.FunctionK
-import cats.data.WriterT
 import cats.implicits._
-import cats.data.StateT
 import cats.effect.concurrent.Ref
 import java.util.UUID
-import cats.effect.syntax.bracket
 import java.{util => ju}
+import cats.free.FreeApplicative
 
 object Workflow {
 
-  type Workflow[A] = Free[Step, A]
+  type Workflow[A] = Free[WorkflowOp, A]
+  type ParWorkflow[A] = FreeApplicative[WorkflowOp, A]
 
+  sealed trait WorkflowOp[A]
   case class Step[A](
       name: String,
       effect: IO[A],
       compensate: IO[Unit] = IO.unit
-  )
+  ) extends WorkflowOp[A]
+  case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
+  case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
 
   def step[A](
       name: String,
       effect: IO[A],
       compensate: IO[Unit]
   ): Workflow[A] = {
-    liftF[Step, A](Step(name, effect, compensate))
+    liftF[WorkflowOp, A](Step(name, effect, compensate))
+  }
+
+  def parStep[A](
+      name: String,
+      effect: IO[A],
+      compensate: IO[Unit]
+  ): ParWorkflow[A] = {
+    cats.free.FreeApplicative.lift[WorkflowOp, A](
+      Step(name, effect, compensate)
+    )
+  }
+
+  def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {
+    liftF[WorkflowOp, A](FromPar(par))
+  }
+
+  def fromSeq[A](seq: Workflow[A]): ParWorkflow[A] = {
+    cats.free.FreeApplicative.lift[WorkflowOp, A](FromSeq(seq))
   }
 }
 
@@ -181,21 +201,26 @@ object WorkflowRuntime {
 
     private val runCompensation: IO[Unit] = rollback.get.flatten
 
-    private def foldIO(tracer: WorkflowTracer): FunctionK[Step, IO] =
-      new FunctionK[Step, IO] {
-        override def apply[A](
-            step: Step[A]
-        ): IO[A] =
-          tracer.logStepStarted(step) *> step.effect.attempt.flatMap {
-            case Right(a) =>
-              tracer.logStepCompleted(step, a) *> tellIO(tracer, step).as(a)
-            case Left(err) =>
-              tracer.logStepFailed(step, err) *> runCompensation *> IO
-                .raiseError(
-                  err
-                )
-          }
+    private def foldIO(tracer: WorkflowTracer): FunctionK[WorkflowOp, IO] =
+      new FunctionK[WorkflowOp, IO] {
+        override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
+          case step @ Step(_, _, _) => processStep(tracer, step)
+          case FromSeq(seq)         => seq.foldMap(foldIO(tracer))
+          case FromPar(par)         => par.foldMap(foldIO(tracer)) //TODO parallelize
+        }
       }
+
+    private def processStep[A](tracer: WorkflowTracer, step: Step[A]): IO[A] = {
+      tracer.logStepStarted(step) *> step.effect.attempt.flatMap {
+        case Right(a) =>
+          tracer.logStepCompleted(step, a) *> tellIO(tracer, step).as(a)
+        case Left(err) =>
+          tracer.logStepFailed(step, err) *> runCompensation *> IO
+            .raiseError(
+              err
+            )
+      }
+    }
 
     def toIO[A](workflow: Workflow[A]): IO[A] = store.logWorkflowExecution {
       tracer =>
@@ -218,7 +243,10 @@ object Hello extends IOApp {
   val step2 =
     step("step 2", IO(println("comment")), IO(println("revert step 2")))
 
-  val step3 = step("step 3", IO(println("va?")), IO(println("revert step 3")))
+  val step31 =
+    parStep("step 3-1", IO(println("va?")), IO(println("revert step 3-1")))
+  val step32 =
+    parStep("step 3-2", IO(println("va?")), IO(println("revert step 3-2")))
 
   val step4 = step(
     "step 4",
@@ -229,7 +257,7 @@ object Hello extends IOApp {
   val program: Workflow[Unit] = for {
     _ <- step1
     _ <- step2
-    _ <- step3
+    _ <- fromPar((step31, step32).tupled)
     _ <- step4
   } yield ()
 
