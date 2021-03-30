@@ -5,7 +5,6 @@ import cats.Monad
 import cats.free.Free
 import cats.free.Free.liftF
 import cats.arrow.FunctionK
-import cats.implicits._
 import cats.free.FreeApplicative
 import cats.Parallel
 import cats.Applicative

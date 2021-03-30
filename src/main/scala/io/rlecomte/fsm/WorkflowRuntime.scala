@@ -1,21 +1,10 @@
 package io.rlecomte.fsm
 
 import cats.effect.IO
-import cats.Monad
-import cats.free.Free
-import cats.free.Free.liftF
-import cats.effect.IOApp
-import cats.effect.ExitCode
 import cats.arrow.FunctionK
 import cats.implicits._
 import cats.effect.concurrent.Ref
-import java.util.UUID
-import java.{util => ju}
-import cats.free.FreeApplicative
 import cats.effect.ContextShift
-import cats.Parallel
-import cats.Applicative
-import cats.~>
 
 object WorkflowRuntime {
   import Workflow._

@@ -5,6 +5,18 @@ ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / organization := "com.example"
 ThisBuild / organizationName := "example"
 
+val ScalacOptions = Seq(
+  "-deprecation",
+  "-encoding",
+  "UTF-8",
+  "-language:higherKinds",
+  "-language:postfixOps",
+  "-feature",
+  "-Xfatal-warnings",
+  "-Ywarn-unused"
+)
+scalacOptions := ScalacOptions
+
 lazy val root = (project in file("."))
   .settings(
     name := "distributed-fsm",
