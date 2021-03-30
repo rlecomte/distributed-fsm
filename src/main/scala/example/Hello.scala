@@ -13,6 +13,9 @@ import java.util.UUID
 import java.{util => ju}
 import cats.free.FreeApplicative
 import cats.effect.ContextShift
+import cats.Parallel
+import cats.Applicative
+import cats.~>
 
 object Workflow {
 
@@ -36,22 +39,32 @@ object Workflow {
     liftF[WorkflowOp, A](Step(name, effect, compensate))
   }
 
-  def parStep[A](
-      name: String,
-      effect: IO[A],
-      compensate: IO[Unit]
-  ): ParWorkflow[A] = {
-    cats.free.FreeApplicative.lift[WorkflowOp, A](
-      Step(name, effect, compensate)
-    )
-  }
-
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {
     liftF[WorkflowOp, A](FromPar(par))
   }
 
   def fromSeq[A](seq: Workflow[A]): ParWorkflow[A] = {
     cats.free.FreeApplicative.lift[WorkflowOp, A](FromSeq(seq))
+  }
+
+  implicit val parallel: Parallel[Workflow] = new Parallel[Workflow] {
+    type F[A] = ParWorkflow[A]
+
+    override def sequential: ParWorkflow ~> Workflow =
+      new FunctionK[ParWorkflow, Workflow] {
+        override def apply[A](fa: ParWorkflow[A]): Workflow[A] = fromPar(fa)
+      }
+
+    override def parallel: Workflow ~> ParWorkflow =
+      new FunctionK[Workflow, ParWorkflow] {
+        override def apply[A](fa: Workflow[A]): ParWorkflow[A] = fromSeq(fa)
+      }
+
+    override def applicative: Applicative[ParWorkflow] =
+      implicitly[Applicative[ParWorkflow]]
+
+    override def monad: Monad[Workflow] = implicitly[Monad[Workflow]]
+
   }
 }
 
@@ -253,13 +266,13 @@ object Hello extends IOApp {
     step("step 2", IO(println("comment")), IO(println("revert step 2")))
 
   val step31 =
-    parStep(
+    step(
       "step 3-1",
       IO(Thread.sleep(1000)) *> IO(println("va?")),
       IO(println("revert step 3-1"))
     )
   val step32 =
-    parStep(
+    step(
       "step 3-2",
       IO(Thread.sleep(2000)) *> IO(println("va?")),
       IO(println("revert step 3-2"))
@@ -274,7 +287,7 @@ object Hello extends IOApp {
   val program: Workflow[Unit] = for {
     _ <- step1
     _ <- step2
-    _ <- fromPar((step31, step32).tupled)
+    _ <- (step31, step32).parTupled
     _ <- step4
   } yield ()
 
