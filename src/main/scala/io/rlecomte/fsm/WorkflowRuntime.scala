@@ -36,8 +36,8 @@ object WorkflowRuntime {
     )(implicit cs: ContextShift[IO]): FunctionK[WorkflowOp, IO] =
       new FunctionK[WorkflowOp, IO] {
         override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
-          case step @ Step(_, _, _) => processStep(tracer, step)
-          case FromSeq(seq)         => seq.foldMap(foldIO(tracer))
+          case step @ Step(_, _, _, _) => processStep(tracer, step)
+          case FromSeq(seq)            => seq.foldMap(foldIO(tracer))
           case FromPar(par) => {
             val parIO = par
               .foldMap(foldIO(tracer).andThen(IO.ioParallel.parallel))
@@ -51,10 +51,20 @@ object WorkflowRuntime {
         case Right(a) =>
           tracer.logStepCompleted(step, a) *> tellIO(tracer, step).as(a)
         case Left(err) =>
-          tracer.logStepFailed(step, err) *> runCompensation *> IO
-            .raiseError(
-              err
-            )
+          val retryIO = step.retryStrategy match {
+            case NoRetry | LinearRetry(0) =>
+              runCompensation *> IO
+                .raiseError(
+                  err
+                )
+            case LinearRetry(nb) =>
+              processStep(
+                tracer,
+                step.copy(retryStrategy = LinearRetry(nb - 1))
+              )
+          }
+
+          tracer.logStepFailed(step, err) *> retryIO
       }
     }
 

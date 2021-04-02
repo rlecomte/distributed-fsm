@@ -15,11 +15,16 @@ object Workflow {
   type Workflow[A] = Free[WorkflowOp, A]
   type ParWorkflow[A] = FreeApplicative[WorkflowOp, A]
 
+  sealed trait RetryStrategy
+  case object NoRetry extends RetryStrategy
+  case class LinearRetry(nbRetry: Int) extends RetryStrategy
+
   sealed trait WorkflowOp[A]
   case class Step[A](
       name: String,
       effect: IO[A],
-      compensate: IO[Unit] = IO.unit
+      compensate: IO[Unit] = IO.unit,
+      retryStrategy: RetryStrategy
   ) extends WorkflowOp[A]
   case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
   case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
@@ -27,9 +32,10 @@ object Workflow {
   def step[A](
       name: String,
       effect: IO[A],
-      compensate: IO[Unit]
+      compensate: IO[Unit],
+      retryStrategy: RetryStrategy = NoRetry
   ): Workflow[A] = {
-    liftF[WorkflowOp, A](Step(name, effect, compensate))
+    liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy))
   }
 
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {

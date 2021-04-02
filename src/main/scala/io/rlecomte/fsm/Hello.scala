@@ -31,7 +31,8 @@ object Hello extends IOApp {
   val step4 = step(
     "step 4",
     IO(println("Oh no!")) *> IO.raiseError(new RuntimeException("oops")),
-    IO(println("should not be execute"))
+    IO(println("should not be execute")),
+    retryStrategy = LinearRetry(3)
   )
 
   val program: FSM[Unit, Unit] = FSM.define("simple state machine") { _ =>
