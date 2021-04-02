@@ -12,9 +12,12 @@ trait WorkflowStore {
 
   def logWorkflowFailed(runId: UUID): IO[Unit]
 
-  def logWorkflowExecution[A](f: WorkflowTracer => IO[A]): IO[A] = for {
+  def logWorkflowExecution[A](
+      workflowName: String,
+      f: WorkflowTracer => IO[A]
+  ): IO[A] = for {
     runId <- IO(UUID.randomUUID())
-    tracer <- logWorkflowStarted("foo", runId) //TODO name workflow
+    tracer <- logWorkflowStarted(workflowName, runId)
     either <- f(tracer).attempt
     result <- either match {
       case Right(r)  => logWorkflowCompleted(runId).as(r)

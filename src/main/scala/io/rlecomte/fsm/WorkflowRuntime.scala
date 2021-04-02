@@ -58,16 +58,22 @@ object WorkflowRuntime {
       }
     }
 
-    def toIO[A](workflow: Workflow[A])(implicit cs: ContextShift[IO]): IO[A] =
-      store.logWorkflowExecution { tracer =>
-        workflow.foldMap(foldIO(tracer))
-      }
+    def toIO[I, O](
+        fsm: FSM[I, O]
+    )(implicit cs: ContextShift[IO]): I => IO[O] = input => {
+      store.logWorkflowExecution(
+        fsm.name,
+        tracer => fsm.f(input).foldMap(foldIO(tracer))
+      )
+    }
   }
 
-  def run[A](
+  def run[I, O](
       store: WorkflowStore
-  )(workflow: Workflow[A])(implicit cs: ContextShift[IO]): IO[A] = for {
-    ref <- Ref.of[IO, IO[Unit]](IO.unit)
-    result <- new Run(store, ref).toIO(workflow)
-  } yield result
+  )(workflow: FSM[I, O])(implicit cs: ContextShift[IO]): I => IO[O] = input => {
+    for {
+      ref <- Ref.of[IO, IO[Unit]](IO.unit)
+      result <- new Run(store, ref).toIO(workflow).apply(input)
+    } yield result
+  }
 }

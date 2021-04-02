@@ -34,17 +34,19 @@ object Hello extends IOApp {
     IO(println("should not be execute"))
   )
 
-  val program: Workflow[Unit] = for {
-    _ <- step1
-    _ <- step2
-    _ <- (step31, step32).parTupled
-    _ <- step4
-  } yield ()
+  val program: FSM[Unit, Unit] = FSM.define("simple state machine") { _ =>
+    for {
+      _ <- step1
+      _ <- step2
+      _ <- (step31, step32).parTupled
+      _ <- step4
+    } yield ()
+  }
 
   override def run(args: List[String]): IO[ExitCode] = for {
     refStore <- Ref.of[IO, Vector[WorkflowEvent]](Vector())
     store = InMemoryWorkflowStore(refStore)
-    _ <- WorkflowRuntime.run(store)(program).attempt
+    _ <- WorkflowRuntime.run(store)(program).apply(()).attempt
     _ <- refStore.get.flatMap(v => v.traverse(evt => IO(println(evt))))
   } yield ExitCode.Success
 }
