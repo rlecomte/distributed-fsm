@@ -6,9 +6,9 @@ import cats.effect.Ref
 import io.circe.Encoder
 import cats.effect.kernel.Par
 import cats.Parallel
+import Workflow._
 
 object WorkflowRuntime {
-  import Workflow._
   type RollbackRef = Ref[IO, IO[Unit]]
 
   private class Run(store: WorkflowLogger, rollback: RollbackRef) {
@@ -95,11 +95,9 @@ object WorkflowRuntime {
       logger: WorkflowLogger,
       workflow: FSM[I, O]
   ): CompiledFSM[I, O] = CompiledFSM { input =>
-    {
-      for {
-        ref <- Ref.of[IO, IO[Unit]](IO.unit)
-        result <- new Run(logger, ref).toIO(workflow).apply(input)
-      } yield result
-    }
+    for {
+      ref <- Ref.of[IO, IO[Unit]](IO.unit)
+      result <- new Run(logger, ref).toIO(workflow).apply(input)
+    } yield result
   }
 }
