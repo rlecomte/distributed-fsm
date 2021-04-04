@@ -3,7 +3,7 @@ package io.rlecomte.fsm
 import Workflow._
 import cats.effect.IO
 
-case class FSM[I, O](name: String, f: I => Workflow[O]) {
+case class FSM[I, O](name: String, workflow: I => Workflow[O]) {
 
   def compile(implicit
       logger: WorkflowLogger

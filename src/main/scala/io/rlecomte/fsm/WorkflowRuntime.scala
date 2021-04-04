@@ -13,7 +13,7 @@ object WorkflowRuntime {
 
   private class Run(store: WorkflowLogger, rollback: RollbackRef) {
 
-    private def tellIO(
+    private def stackCompensation(
         tracer: WorkflowTracer,
         step: Step[_]
     ): IO[Unit] = {
@@ -62,33 +62,44 @@ object WorkflowRuntime {
     )(implicit encoder: Encoder[A]): IO[A] = {
       tracer.logStepStarted(step) *> step.effect.attempt.flatMap {
         case Right(a) =>
-          tracer.logStepCompleted(step, a) *> tellIO(tracer, step).as(a)
+          tracer.logStepCompleted(step, a) *> stackCompensation(tracer, step)
+            .as(a)
         case Left(err) =>
-          val retryIO = step.retryStrategy match {
-            case NoRetry | LinearRetry(0) =>
-              runCompensation *> IO
-                .raiseError(
-                  err
-                )
-            case LinearRetry(nb) =>
-              processStep(
-                tracer,
-                step.copy(retryStrategy = LinearRetry(nb - 1))
-              )
-          }
-
-          tracer.logStepFailed(step, err) *> retryIO
+          retryOrCompensate(tracer, step, err)
       }
     }
 
+    private def retryOrCompensate[A](
+        tracer: WorkflowTracer,
+        step: Step[A],
+        err: Throwable
+    )(implicit
+        encoder: Encoder[A]
+    ): IO[A] = {
+      val retryIO = step.retryStrategy match {
+        case NoRetry | LinearRetry(0) =>
+          runCompensation *> IO
+            .raiseError(
+              err
+            )
+        case LinearRetry(nb) =>
+          processStep(
+            tracer,
+            step.copy(retryStrategy = LinearRetry(nb - 1))
+          )
+      }
+
+      tracer.logStepFailed(step, err) *> retryIO
+    }
+
     def toIO[I, O](
-        fsm: FSM[I, O]
-    ): I => IO[O] = input => {
+        fsm: FSM[I, O],
+        input: I
+    ): IO[O] =
       store.logWorkflowExecution(
         fsm.name,
-        tracer => fsm.f(input).foldMap(foldIO(tracer))
+        tracer => fsm.workflow(input).foldMap(foldIO(tracer))
       )
-    }
   }
 
   def compile[I, O](
@@ -97,7 +108,7 @@ object WorkflowRuntime {
   ): CompiledFSM[I, O] = CompiledFSM { input =>
     for {
       ref <- Ref.of[IO, IO[Unit]](IO.unit)
-      result <- new Run(logger, ref).toIO(workflow).apply(input)
+      result <- new Run(logger, ref).toIO(workflow, input)
     } yield result
   }
 }
