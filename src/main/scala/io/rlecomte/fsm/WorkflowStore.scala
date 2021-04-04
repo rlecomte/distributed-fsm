@@ -4,17 +4,50 @@ import cats.effect.IO
 import cats.effect.concurrent.Ref
 import io.circe.Encoder
 
-trait WorkflowStore {
-  def logWorkflowStarted(name: String, runId: RunId): IO[WorkflowTracer]
+trait BackendEventStore {
+  def registerEvent(event: WorkflowEvent): IO[Unit]
 
-  def logWorkflowCompleted(runId: RunId): IO[Unit]
+  def readAllEvents: IO[List[WorkflowEvent]]
 
-  def logWorkflowFailed(runId: RunId): IO[Unit]
+  def readEvents(runId: RunId): IO[List[WorkflowEvent]]
+}
+
+case class InMemoryBackendEventStore(ref: Ref[IO, Vector[WorkflowEvent]])
+    extends BackendEventStore {
+  override def registerEvent(event: WorkflowEvent): IO[Unit] =
+    ref.getAndUpdate(vec => vec.appended(event)).void
+
+  override def readAllEvents: IO[List[WorkflowEvent]] = ref.get.map(_.toList)
+
+  override def readEvents(runId: RunId): IO[List[WorkflowEvent]] =
+    readAllEvents.map(_.filter(_.id == runId))
+}
+
+object InMemoryBackendEventStore {
+  val newStore: IO[InMemoryBackendEventStore] = for {
+    refStore <- Ref.of[IO, Vector[WorkflowEvent]](Vector())
+  } yield InMemoryBackendEventStore(refStore)
+}
+
+case class WorkflowLogger(backend: BackendEventStore) {
+  def logWorkflowStarted(
+      name: String,
+      runId: RunId
+  ): IO[WorkflowTracer] = for {
+    _ <- backend.registerEvent(WorkflowStarted(name, runId))
+    tracer = new WorkflowTracer(backend, runId)
+  } yield tracer
+
+  def logWorkflowCompleted(runId: RunId): IO[Unit] =
+    backend.registerEvent(WorkflowCompleted(runId))
+
+  def logWorkflowFailed(runId: RunId): IO[Unit] =
+    backend.registerEvent(WorkflowFailed(runId))
 
   def logWorkflowExecution[A](
       workflowName: String,
       f: WorkflowTracer => IO[A]
-  ): IO[A] = for {
+  ): IO[A] = for { //TODO use bracket?
     runId <- RunId.newRunId
     tracer <- logWorkflowStarted(workflowName, runId)
     either <- f(tracer).attempt
@@ -25,104 +58,47 @@ trait WorkflowStore {
   } yield result
 }
 
-trait WorkflowTracer {
-  import Workflow._
+case class WorkflowTracer(backend: BackendEventStore, runId: RunId) {
+  def logStepStarted(step: Workflow.Step[_]): IO[Unit] =
+    backend.registerEvent(WorkflowStepStarted(step.name, runId))
 
-  def logStepStarted(step: Step[_]): IO[Unit]
+  def logStepCompleted[A](
+      step: Workflow.Step[A],
+      result: A
+  )(implicit encoder: Encoder[A]): IO[Unit] = backend.registerEvent(
+    WorkflowStepCompleted(step.name, runId, encoder(result))
+  )
 
-  def logStepCompleted[A: Encoder](step: Step[A], result: A): IO[Unit]
+  def logStepFailed(
+      step: Workflow.Step[_],
+      error: Throwable
+  ): IO[Unit] =
+    backend.registerEvent(
+      WorkflowStepFailed(
+        step.name,
+        runId,
+        WorkflowError.fromThrowable(error)
+      )
+    )
 
-  def logStepFailed(step: Step[_], error: Throwable): IO[Unit]
+  def logStepCompensationStarted(step: Workflow.Step[_]): IO[Unit] =
+    backend.registerEvent(WorkflowCompensationStarted(step.name, runId))
 
-  def logStepCompensationStarted(step: Step[_]): IO[Unit]
+  def logStepCompensationFailed(
+      step: Workflow.Step[_],
+      error: Throwable
+  ): IO[Unit] =
+    backend.registerEvent(
+      WorkflowCompensationFailed(
+        step.name,
+        runId,
+        WorkflowError.fromThrowable(error)
+      )
+    )
 
-  def logStepCompensationFailed(step: Step[_], error: Throwable): IO[Unit]
+  def logStepCompensationCompleted(
+      step: Workflow.Step[_]
+  ): IO[Unit] =
+    backend.registerEvent(WorkflowCompensationCompleted(step.name, runId))
 
-  def logStepCompensationCompleted(step: Step[_]): IO[Unit]
-}
-
-case class InMemoryWorkflowStore(store: Ref[IO, Vector[WorkflowEvent]])
-    extends WorkflowStore {
-
-  case class InMemoryWorkflowTracer(runId: RunId) extends WorkflowTracer {
-    override def logStepStarted(step: Workflow.Step[_]): IO[Unit] =
-      store
-        .getAndUpdate(v => v.appended(WorkflowStepStarted(step.name, runId)))
-        .void
-
-    override def logStepCompleted[A: Encoder](
-        step: Workflow.Step[A],
-        result: A
-    ): IO[Unit] =
-      store
-        .getAndUpdate(v =>
-          v.appended(
-            WorkflowStepCompleted(step.name, runId, Encoder[A].apply(result))
-          )
-        )
-        .void
-
-    override def logStepFailed(
-        step: Workflow.Step[_],
-        error: Throwable
-    ): IO[Unit] =
-      store
-        .getAndUpdate(v =>
-          v.appended(
-            WorkflowStepFailed(
-              step.name,
-              runId,
-              WorkflowError.fromThrowable(error)
-            )
-          )
-        )
-        .void
-
-    override def logStepCompensationStarted(step: Workflow.Step[_]): IO[Unit] =
-      store
-        .getAndUpdate(v =>
-          v.appended(WorkflowCompensationStarted(step.name, runId))
-        )
-        .void
-
-    override def logStepCompensationFailed(
-        step: Workflow.Step[_],
-        error: Throwable
-    ): IO[Unit] =
-      store
-        .getAndUpdate(v =>
-          v.appended(
-            WorkflowCompensationFailed(
-              step.name,
-              runId,
-              WorkflowError.fromThrowable(error)
-            )
-          )
-        )
-        .void
-
-    override def logStepCompensationCompleted(
-        step: Workflow.Step[_]
-    ): IO[Unit] =
-      store
-        .getAndUpdate(v =>
-          v.appended(WorkflowCompensationCompleted(step.name, runId))
-        )
-        .void
-
-  }
-
-  override def logWorkflowStarted(
-      name: String,
-      runId: RunId
-  ): IO[WorkflowTracer] = for {
-    _ <- store.getAndUpdate(v => v.appended(WorkflowStarted(name, runId)))
-    tracer = new InMemoryWorkflowTracer(runId)
-  } yield tracer
-
-  override def logWorkflowCompleted(runId: RunId): IO[Unit] =
-    store.getAndUpdate(v => v.appended(WorkflowCompleted(runId))).void
-
-  override def logWorkflowFailed(runId: RunId): IO[Unit] =
-    store.getAndUpdate(v => v.appended(WorkflowFailed(runId))).void
 }

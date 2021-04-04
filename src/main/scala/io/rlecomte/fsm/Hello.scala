@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.effect.IOApp
 import cats.implicits._
 import cats.effect.ExitCode
-import cats.effect.concurrent.Ref
 
 object Hello extends IOApp {
   import Workflow._
@@ -44,10 +43,12 @@ object Hello extends IOApp {
     } yield ()
   }
 
+  val backend: InMemoryBackendEventStore =
+    InMemoryBackendEventStore.newStore.unsafeRunSync()
+  implicit val logger: WorkflowLogger = WorkflowLogger(backend)
+
   override def run(args: List[String]): IO[ExitCode] = for {
-    refStore <- Ref.of[IO, Vector[WorkflowEvent]](Vector())
-    store = InMemoryWorkflowStore(refStore)
-    _ <- WorkflowRuntime.run(store)(program).apply(()).attempt
-    _ <- refStore.get.flatMap(v => v.traverse(evt => IO(println(evt))))
+    _ <- program.compile.run(()).attempt
+    _ <- backend.readAllEvents.flatMap(v => v.traverse(evt => IO(println(evt))))
   } yield ExitCode.Success
 }

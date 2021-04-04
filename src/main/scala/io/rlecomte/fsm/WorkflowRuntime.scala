@@ -11,7 +11,7 @@ object WorkflowRuntime {
   import Workflow._
   type RollbackRef = Ref[IO, IO[Unit]]
 
-  private class Run(store: WorkflowStore, rollback: RollbackRef) {
+  private class Run(store: WorkflowLogger, rollback: RollbackRef) {
 
     private def tellIO(
         tracer: WorkflowTracer,
@@ -83,14 +83,13 @@ object WorkflowRuntime {
     }
   }
 
-  def run[I, O](
-      store: WorkflowStore
-  )(
+  def compile[I, O](
+      logger: WorkflowLogger,
       workflow: FSM[I, O]
   )(implicit cs: ContextShift[IO]): I => IO[O] = input => {
     for {
       ref <- Ref.of[IO, IO[Unit]](IO.unit)
-      result <- new Run(store, ref).toIO(workflow).apply(input)
+      result <- new Run(logger, ref).toIO(workflow).apply(input)
     } yield result
   }
 }
