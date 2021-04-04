@@ -1,8 +1,8 @@
 package io.rlecomte.fsm
 
 import cats.effect.IO
-import cats.effect.concurrent.Ref
 import io.circe.Encoder
+import cats.effect.kernel.Ref
 
 trait BackendEventStore {
   def registerEvent(event: WorkflowEvent): IO[Unit]

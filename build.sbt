@@ -22,7 +22,7 @@ scalacOptions := ScalacOptions
 lazy val root = (project in file("."))
   .settings(
     name := "distributed-fsm",
-    libraryDependencies += "org.typelevel" %% "cats-effect" % "2.3.1",
+    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.0.0",
     libraryDependencies += "org.typelevel" %% "cats-free" % "2.3.1",
     libraryDependencies += scalaTest % Test,
     libraryDependencies ++= Seq(

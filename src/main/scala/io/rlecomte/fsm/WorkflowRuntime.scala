@@ -2,10 +2,10 @@ package io.rlecomte.fsm
 
 import cats.effect.IO
 import cats.arrow.FunctionK
-import cats.implicits._
-import cats.effect.concurrent.Ref
-import cats.effect.ContextShift
+import cats.effect.Ref
 import io.circe.Encoder
+import cats.effect.kernel.Par
+import cats.Parallel
 
 object WorkflowRuntime {
   import Workflow._
@@ -34,18 +34,26 @@ object WorkflowRuntime {
 
     private def foldIO(
         tracer: WorkflowTracer
-    )(implicit cs: ContextShift[IO]): FunctionK[WorkflowOp, IO] =
+    ): FunctionK[WorkflowOp, IO] =
       new FunctionK[WorkflowOp, IO] {
         override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
           case step @ Step(_, _, _, _, encoder) =>
             processStep(tracer, step)(encoder)
           case FromSeq(seq) => seq.foldMap(foldIO(tracer))
           case FromPar(par) => {
-            val parIO = par
-              .foldMap(foldIO(tracer).andThen(IO.ioParallel.parallel))
-            IO.ioParallel.sequential(parIO)
+            Par.ParallelF.value(
+              par
+                .foldMap(foldIO(tracer).andThen(toParallelIO))(
+                  Parallel[IO, IO.Par].applicative
+                )
+            )
           }
         }
+      }
+
+    private val toParallelIO: FunctionK[IO, IO.Par] =
+      new FunctionK[IO, IO.Par] {
+        override def apply[A](fa: IO[A]): IO.Par[A] = Par.ParallelF(fa)
       }
 
     private def processStep[A](
@@ -75,7 +83,7 @@ object WorkflowRuntime {
 
     def toIO[I, O](
         fsm: FSM[I, O]
-    )(implicit cs: ContextShift[IO]): I => IO[O] = input => {
+    ): I => IO[O] = input => {
       store.logWorkflowExecution(
         fsm.name,
         tracer => fsm.f(input).foldMap(foldIO(tracer))
@@ -86,7 +94,7 @@ object WorkflowRuntime {
   def compile[I, O](
       logger: WorkflowLogger,
       workflow: FSM[I, O]
-  )(implicit cs: ContextShift[IO]): I => IO[O] = input => {
+  ): I => IO[O] = input => {
     for {
       ref <- Ref.of[IO, IO[Unit]](IO.unit)
       result <- new Run(logger, ref).toIO(workflow).apply(input)

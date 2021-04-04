@@ -43,11 +43,9 @@ object Hello extends IOApp {
     } yield ()
   }
 
-  val backend: InMemoryBackendEventStore =
-    InMemoryBackendEventStore.newStore.unsafeRunSync()
-  implicit val logger: WorkflowLogger = WorkflowLogger(backend)
-
   override def run(args: List[String]): IO[ExitCode] = for {
+    backend <- InMemoryBackendEventStore.newStore
+    implicit0(logger: WorkflowLogger) = WorkflowLogger(backend)
     _ <- program.compile.run(()).attempt
     _ <- backend.readAllEvents.flatMap(v => v.traverse(evt => IO(println(evt))))
   } yield ExitCode.Success
