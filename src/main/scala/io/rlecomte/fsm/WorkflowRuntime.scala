@@ -94,10 +94,12 @@ object WorkflowRuntime {
   def compile[I, O](
       logger: WorkflowLogger,
       workflow: FSM[I, O]
-  ): I => IO[O] = input => {
-    for {
-      ref <- Ref.of[IO, IO[Unit]](IO.unit)
-      result <- new Run(logger, ref).toIO(workflow).apply(input)
-    } yield result
+  ): CompiledFSM[I, O] = CompiledFSM { input =>
+    {
+      for {
+        ref <- Ref.of[IO, IO[Unit]](IO.unit)
+        result <- new Run(logger, ref).toIO(workflow).apply(input)
+      } yield result
+    }
   }
 }

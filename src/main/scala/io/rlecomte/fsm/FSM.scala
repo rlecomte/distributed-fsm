@@ -7,9 +7,7 @@ case class FSM[I, O](name: String, f: I => Workflow[O]) {
 
   def compile(implicit
       logger: WorkflowLogger
-  ): CompiledFSM[I, O] = {
-    CompiledFSM(WorkflowRuntime.compile(logger, this))
-  }
+  ): CompiledFSM[I, O] = WorkflowRuntime.compile(logger, this)
 }
 
 case class CompiledFSM[I, O](run: I => IO[O]) extends AnyVal
