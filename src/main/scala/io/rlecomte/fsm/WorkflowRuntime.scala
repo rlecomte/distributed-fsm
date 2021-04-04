@@ -5,6 +5,7 @@ import cats.arrow.FunctionK
 import cats.implicits._
 import cats.effect.concurrent.Ref
 import cats.effect.ContextShift
+import io.circe.Encoder
 
 object WorkflowRuntime {
   import Workflow._
@@ -36,8 +37,9 @@ object WorkflowRuntime {
     )(implicit cs: ContextShift[IO]): FunctionK[WorkflowOp, IO] =
       new FunctionK[WorkflowOp, IO] {
         override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
-          case step @ Step(_, _, _, _) => processStep(tracer, step)
-          case FromSeq(seq)            => seq.foldMap(foldIO(tracer))
+          case step @ Step(_, _, _, _, encoder) =>
+            processStep(tracer, step)(encoder)
+          case FromSeq(seq) => seq.foldMap(foldIO(tracer))
           case FromPar(par) => {
             val parIO = par
               .foldMap(foldIO(tracer).andThen(IO.ioParallel.parallel))
@@ -46,7 +48,10 @@ object WorkflowRuntime {
         }
       }
 
-    private def processStep[A](tracer: WorkflowTracer, step: Step[A]): IO[A] = {
+    private def processStep[A](
+        tracer: WorkflowTracer,
+        step: Step[A]
+    )(implicit encoder: Encoder[A]): IO[A] = {
       tracer.logStepStarted(step) *> step.effect.attempt.flatMap {
         case Right(a) =>
           tracer.logStepCompleted(step, a) *> tellIO(tracer, step).as(a)
@@ -80,7 +85,9 @@ object WorkflowRuntime {
 
   def run[I, O](
       store: WorkflowStore
-  )(workflow: FSM[I, O])(implicit cs: ContextShift[IO]): I => IO[O] = input => {
+  )(
+      workflow: FSM[I, O]
+  )(implicit cs: ContextShift[IO]): I => IO[O] = input => {
     for {
       ref <- Ref.of[IO, IO[Unit]](IO.unit)
       result <- new Run(store, ref).toIO(workflow).apply(input)

@@ -28,7 +28,7 @@ object Hello extends IOApp {
       IO(println("revert step 3-2"))
     )
 
-  val step4 = step(
+  val step4 = step[Unit](
     "step 4",
     IO(println("Oh no!")) *> IO.raiseError(new RuntimeException("oops")),
     IO(println("should not be execute")),

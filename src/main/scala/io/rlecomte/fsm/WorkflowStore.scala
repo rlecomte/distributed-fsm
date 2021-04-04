@@ -2,21 +2,20 @@ package io.rlecomte.fsm
 
 import cats.effect.IO
 import cats.effect.concurrent.Ref
-import java.util.UUID
-import java.{util => ju}
+import io.circe.Encoder
 
 trait WorkflowStore {
-  def logWorkflowStarted(name: String, runId: UUID): IO[WorkflowTracer]
+  def logWorkflowStarted(name: String, runId: RunId): IO[WorkflowTracer]
 
-  def logWorkflowCompleted(runId: UUID): IO[Unit]
+  def logWorkflowCompleted(runId: RunId): IO[Unit]
 
-  def logWorkflowFailed(runId: UUID): IO[Unit]
+  def logWorkflowFailed(runId: RunId): IO[Unit]
 
   def logWorkflowExecution[A](
       workflowName: String,
       f: WorkflowTracer => IO[A]
   ): IO[A] = for {
-    runId <- IO(UUID.randomUUID())
+    runId <- RunId.newRunId
     tracer <- logWorkflowStarted(workflowName, runId)
     either <- f(tracer).attempt
     result <- either match {
@@ -31,7 +30,7 @@ trait WorkflowTracer {
 
   def logStepStarted(step: Step[_]): IO[Unit]
 
-  def logStepCompleted[A](step: Step[A], result: A): IO[Unit]
+  def logStepCompleted[A: Encoder](step: Step[A], result: A): IO[Unit]
 
   def logStepFailed(step: Step[_], error: Throwable): IO[Unit]
 
@@ -45,21 +44,23 @@ trait WorkflowTracer {
 case class InMemoryWorkflowStore(store: Ref[IO, Vector[WorkflowEvent]])
     extends WorkflowStore {
 
-  case class InMemoryWorkflowTracer(runId: UUID) extends WorkflowTracer {
+  case class InMemoryWorkflowTracer(runId: RunId) extends WorkflowTracer {
     override def logStepStarted(step: Workflow.Step[_]): IO[Unit] =
       store
         .getAndUpdate(v => v.appended(WorkflowStepStarted(step.name, runId)))
-        .as(())
+        .void
 
-    override def logStepCompleted[A](
+    override def logStepCompleted[A: Encoder](
         step: Workflow.Step[A],
         result: A
     ): IO[Unit] =
       store
         .getAndUpdate(v =>
-          v.appended(WorkflowStepCompleted(step.name, runId, result.toString))
+          v.appended(
+            WorkflowStepCompleted(step.name, runId, Encoder[A].apply(result))
+          )
         )
-        .as(())
+        .void
 
     override def logStepFailed(
         step: Workflow.Step[_],
@@ -67,16 +68,22 @@ case class InMemoryWorkflowStore(store: Ref[IO, Vector[WorkflowEvent]])
     ): IO[Unit] =
       store
         .getAndUpdate(v =>
-          v.appended(WorkflowStepFailed(step.name, runId, error))
+          v.appended(
+            WorkflowStepFailed(
+              step.name,
+              runId,
+              WorkflowError.fromThrowable(error)
+            )
+          )
         )
-        .as(())
+        .void
 
     override def logStepCompensationStarted(step: Workflow.Step[_]): IO[Unit] =
       store
         .getAndUpdate(v =>
           v.appended(WorkflowCompensationStarted(step.name, runId))
         )
-        .as(())
+        .void
 
     override def logStepCompensationFailed(
         step: Workflow.Step[_],
@@ -84,9 +91,15 @@ case class InMemoryWorkflowStore(store: Ref[IO, Vector[WorkflowEvent]])
     ): IO[Unit] =
       store
         .getAndUpdate(v =>
-          v.appended(WorkflowCompensationFailed(step.name, runId, error))
+          v.appended(
+            WorkflowCompensationFailed(
+              step.name,
+              runId,
+              WorkflowError.fromThrowable(error)
+            )
+          )
         )
-        .as(())
+        .void
 
     override def logStepCompensationCompleted(
         step: Workflow.Step[_]
@@ -95,21 +108,21 @@ case class InMemoryWorkflowStore(store: Ref[IO, Vector[WorkflowEvent]])
         .getAndUpdate(v =>
           v.appended(WorkflowCompensationCompleted(step.name, runId))
         )
-        .as(())
+        .void
 
   }
 
   override def logWorkflowStarted(
       name: String,
-      runId: ju.UUID
+      runId: RunId
   ): IO[WorkflowTracer] = for {
     _ <- store.getAndUpdate(v => v.appended(WorkflowStarted(name, runId)))
     tracer = new InMemoryWorkflowTracer(runId)
   } yield tracer
 
-  override def logWorkflowCompleted(runId: ju.UUID): IO[Unit] =
-    store.getAndUpdate(v => v.appended(WorkflowCompleted(runId))).as(())
+  override def logWorkflowCompleted(runId: RunId): IO[Unit] =
+    store.getAndUpdate(v => v.appended(WorkflowCompleted(runId))).void
 
-  override def logWorkflowFailed(runId: ju.UUID): IO[Unit] =
-    store.getAndUpdate(v => v.appended(WorkflowFailed(runId))).as(())
+  override def logWorkflowFailed(runId: RunId): IO[Unit] =
+    store.getAndUpdate(v => v.appended(WorkflowFailed(runId))).void
 }
