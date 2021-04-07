@@ -6,8 +6,8 @@ import cats.effect.IO
 case class FSM[I, O](name: String, workflow: I => Workflow[O]) {
 
   def compile(implicit
-      logger: WorkflowLogger
-  ): CompiledFSM[I, O] = WorkflowRuntime.compile(logger, this)
+      backend: BackendEventStore
+  ): CompiledFSM[I, O] = WorkflowRuntime.compile(backend, this)
 }
 
 case class CompiledFSM[I, O](run: I => IO[O]) extends AnyVal

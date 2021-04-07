@@ -44,9 +44,14 @@ object Hello extends IOApp {
   }
 
   override def run(args: List[String]): IO[ExitCode] = for {
-    backend <- InMemoryBackendEventStore.newStore
-    implicit0(logger: WorkflowLogger) = WorkflowLogger(backend)
+    implicit0(backend: BackendEventStore) <- InMemoryBackendEventStore.newStore
     _ <- program.compile.run(()).attempt
-    _ <- backend.readAllEvents.flatMap(v => v.traverse(evt => IO(println(evt))))
+    //_ <- backend.readAllEvents.flatMap(v => v.traverse(evt => IO(println(evt))))
+    summary <- new Projection(backend).getSummary
+    details <- summary.jobs.traverse { case (_, runId) =>
+      new Projection(backend).getJobDetail(runId)
+    }
+    _ <- IO(println(summary))
+    _ <- IO(println(details))
   } yield ExitCode.Success
 }

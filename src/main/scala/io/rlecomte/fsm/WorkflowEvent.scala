@@ -19,50 +19,45 @@ object WorkflowError {
   )
 }
 
-sealed trait WorkflowEvent {
-  val id: RunId
-  val timestamp: Instant
+case class EventId(value: UUID) extends AnyVal
+case class Event(
+    id: EventId = EventId(UUID.randomUUID()),
+    runId: RunId,
+    timestamp: Instant = Instant.now(),
+    payload: WorkflowEvent
+)
+
+object Event {
+  def newEvent(runId: RunId, payload: WorkflowEvent): IO[Event] = IO(
+    Event(runId = runId, payload = payload)
+  )
 }
 
+sealed trait WorkflowEvent
+
 case class WorkflowStarted(
-    workflow: String,
-    id: RunId,
-    timestamp: Instant = Instant.now()
+    workflow: String
 ) extends WorkflowEvent
-case class WorkflowCompleted(id: RunId, timestamp: Instant = Instant.now())
-    extends WorkflowEvent
-case class WorkflowFailed(id: RunId, timestamp: Instant = Instant.now())
-    extends WorkflowEvent
+case object WorkflowCompleted extends WorkflowEvent
+case object WorkflowFailed extends WorkflowEvent
 case class WorkflowStepStarted(
-    step: String,
-    id: RunId,
-    timestamp: Instant = Instant.now()
+    step: String
 ) extends WorkflowEvent
 case class WorkflowStepCompleted(
     step: String,
-    id: RunId,
-    payload: Json,
-    timestamp: Instant = Instant.now()
+    payload: Json
 ) extends WorkflowEvent
 case class WorkflowStepFailed(
     step: String,
-    id: RunId,
-    error: WorkflowError,
-    timestamp: Instant = Instant.now()
+    error: WorkflowError
 ) extends WorkflowEvent
 case class WorkflowCompensationStarted(
-    step: String,
-    id: RunId,
-    timestamp: Instant = Instant.now()
+    step: String
 ) extends WorkflowEvent
 case class WorkflowCompensationCompleted(
-    step: String,
-    id: RunId,
-    timestamp: Instant = Instant.now()
+    step: String
 ) extends WorkflowEvent
 case class WorkflowCompensationFailed(
     step: String,
-    id: RunId,
-    error: WorkflowError,
-    timestamp: Instant = Instant.now()
+    error: WorkflowError
 ) extends WorkflowEvent
