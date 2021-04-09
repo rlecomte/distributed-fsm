@@ -11,8 +11,7 @@ trait BackendEventStore {
   def readEvents(runId: RunId): IO[List[Event]]
 }
 
-case class InMemoryBackendEventStore(ref: Ref[IO, Vector[Event]])
-    extends BackendEventStore {
+case class InMemoryBackendEventStore(ref: Ref[IO, Vector[Event]]) extends BackendEventStore {
   override def registerEvent(event: Event): IO[Unit] =
     ref.getAndUpdate(vec => vec.appended(event)).void
 

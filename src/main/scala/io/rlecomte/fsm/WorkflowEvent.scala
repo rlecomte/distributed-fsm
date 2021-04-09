@@ -33,31 +33,52 @@ object Event {
   )
 }
 
+// Push step 1
+// Completed step 1
+// PushPar step 2 "$correlationId"
+//    Push "$correlationId" step 2-1
+//    Completed step 2-1
+//    Push "$correlationId" step 2-2
+//    Completed step 2-2
+// PopPar
+// PushPar step 3 "$correlationId"
+//    Push "$correlationId" step 3-1
+//    Completed step 3-1
+//    Push "$correlationId" step 3-2
+//    Completed step 3-2
+// PopPar
+// Push step 4
+// Failed step 4
+
 sealed trait WorkflowEvent
 
-case class WorkflowStarted(
-    workflow: String
-) extends WorkflowEvent
+case class WorkflowStarted(workflow: String) extends WorkflowEvent
+
 case object WorkflowCompleted extends WorkflowEvent
+
 case object WorkflowFailed extends WorkflowEvent
-case class WorkflowStepStarted(
-    step: String
+
+case class StepStarted(
+    step: String,
+    correlationId: EventId
 ) extends WorkflowEvent
-case class WorkflowStepCompleted(
+
+case class StepCompleted(
     step: String,
     payload: Json
 ) extends WorkflowEvent
-case class WorkflowStepFailed(
+
+case class StepFailed(
     step: String,
     error: WorkflowError
 ) extends WorkflowEvent
-case class WorkflowCompensationStarted(
-    step: String
-) extends WorkflowEvent
-case class WorkflowCompensationCompleted(
-    step: String
-) extends WorkflowEvent
-case class WorkflowCompensationFailed(
-    step: String,
-    error: WorkflowError
-) extends WorkflowEvent
+
+case object ParStepStarted extends WorkflowEvent
+
+case class ParStepCompleted(correlationId: EventId) extends WorkflowEvent
+
+case class StepCompensationStarted(step: String) extends WorkflowEvent
+
+case class StepCompensationCompleted(step: String) extends WorkflowEvent
+
+case class StepCompensationFailed(step: String, error: WorkflowError) extends WorkflowEvent
