@@ -11,7 +11,6 @@ import cats.implicits._
 
 object WorkflowRuntime {
   case class Ctx(
-      linkedEventId: Option[EventId] = None,
       rollback: IO[Unit] = IO.unit,
       subs: List[StateRef] = Nil
   )
@@ -43,58 +42,62 @@ object WorkflowRuntime {
     private def runCompensation(state: StateRef): IO[Unit] =
       state.get.flatMap(_.rollback)
 
-    private def foldIO(state: StateRef): FunctionK[WorkflowOp, IO] =
+    private def foldIO(parentId: EventId, state: StateRef): FunctionK[WorkflowOp, IO] =
       new FunctionK[WorkflowOp, IO] {
         override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
           case step @ Step(_, _, _, _, encoder) =>
-            processStep(step, state)(encoder)
-          case FromSeq(seq) => seq.foldMap(foldIO(state))
+            processStep(step, parentId, state)(encoder)
+          case FromSeq(seq) => {
+            for {
+              parentId <- logSeqStarted(parentId)
+              result <- seq.foldMap(foldIO(parentId, state))
+            } yield result
+          }
           case FromPar(par) => {
-            val subGraph = Par.ParallelF.value(
+            def subGraph(parentId: EventId) = Par.ParallelF.value(
               par
-                .foldMap(parFoldIO(state))(
+                .foldMap(parFoldIO(parentId, state))(
                   Parallel[IO, IO.Par].applicative
                 )
             )
 
             for {
-              result <- subGraph
+              parentId <- logParStarted(parentId)
+              result <- subGraph(parentId)
               ctx <- state.get
               subRollback <- ctx.subs.traverse(_.get).map(_.foldMap(_.rollback))
-              _ <- state.update(ctx => ctx.copy(rollback = subRollback *> ctx.rollback))
+              _ <- state.update(ctx => ctx.copy(rollback = subRollback *> ctx.rollback, subs = Nil))
             } yield result
           }
         }
       }
 
-    private def parFoldIO(current: StateRef): FunctionK[WorkflowOp, IO.Par] =
+    private def parFoldIO(parentId: EventId, current: StateRef): FunctionK[WorkflowOp, IO.Par] =
       new FunctionK[WorkflowOp, IO.Par] {
         override def apply[A](op: WorkflowOp[A]): IO.Par[A] = Par.ParallelF(for {
-          state <- current.get.flatMap(ctx =>
-            Ref.of[IO, Ctx](ctx.copy(rollback = IO.unit, subs = Nil))
-          )
-          _ <- logParStepStarted(state)
+          state <- Ref.of[IO, Ctx](Ctx(rollback = IO.unit, subs = Nil))
           _ <- current.update(ctx => ctx.copy(subs = state :: ctx.subs))
-          result <- foldIO(state)(op)
-          _ <- logParStepCompleted(state)
+          result <- foldIO(parentId, state)(op)
         } yield result)
       }
 
     private def processStep[A](
         step: Step[A],
+        parentId: EventId,
         state: StateRef
     )(implicit encoder: Encoder[A]): IO[A] = {
-      logStepStarted(step, state) *> step.effect.attempt.flatMap {
+      logStepStarted(step, parentId) *> step.effect.attempt.flatMap {
         case Right(a) =>
           logStepCompleted(step, a) *> stackCompensation(state, step)
             .as(a)
         case Left(err) =>
-          retry(step, state, err)
+          retry(step, parentId, state, err)
       }
     }
 
     private def retry[A](
         step: Step[A],
+        parentId: EventId,
         state: StateRef,
         err: Throwable
     )(implicit
@@ -106,6 +109,7 @@ object WorkflowRuntime {
         case LinearRetry(nb) =>
           processStep(
             step.copy(retryStrategy = LinearRetry(nb - 1)),
+            parentId,
             state
           )
       }
@@ -118,8 +122,8 @@ object WorkflowRuntime {
         state: StateRef,
         input: I
     ): IO[O] = for {
-      _ <- logWorkflowStarted(fsm.name, state)
-      either <- fsm.workflow(input).foldMap(foldIO(state)).attempt
+      parentId <- logWorkflowStarted(fsm.name)
+      either <- fsm.workflow(input).foldMap(foldIO(parentId, state)).attempt
       result <- either match {
         case Right(r)  => logWorkflowCompleted.as(r)
         case Left(err) => runCompensation(state) *> logWorkflowFailed *> IO.raiseError(err)
@@ -127,12 +131,10 @@ object WorkflowRuntime {
     } yield result
 
     def logWorkflowStarted(
-        name: String,
-        state: StateRef
+        name: String
     ): IO[EventId] = for {
       evt <- Event.newEvent(runId, WorkflowStarted(name))
       _ <- backend.registerEvent(evt)
-      _ <- state.update(ctx => ctx.copy(linkedEventId = Some(evt.id)))
     } yield evt.id
 
     val logWorkflowCompleted: IO[EventId] = for {
@@ -140,23 +142,17 @@ object WorkflowRuntime {
       _ <- backend.registerEvent(evt)
     } yield evt.id
 
-    def logParStepStarted(
-        state: StateRef
-    ): IO[EventId] = for {
-      evt <- Event.newEvent(runId, ParStepStarted)
+    def logSeqStarted(parentId: EventId): IO[EventId] = for {
+      evt <- Event.newEvent(runId, SeqStarted(parentId))
       _ <- backend.registerEvent(evt)
-      _ <- state.update(ctx => ctx.copy(linkedEventId = Some(evt.id)))
     } yield evt.id
 
-    def logParStepCompleted(state: StateRef): IO[EventId] =
-      for {
-        linkedEventId <- state.get.map(_.linkedEventId)
-        evt <- Event.newEvent(
-          runId,
-          ParStepCompleted(linkedEventId.get) //FIXME Option.get
-        )
-        _ <- backend.registerEvent(evt)
-      } yield evt.id
+    def logParStarted(
+        parentId: EventId
+    ): IO[EventId] = for {
+      evt <- Event.newEvent(runId, ParStarted(parentId))
+      _ <- backend.registerEvent(evt)
+    } yield evt.id
 
     val logWorkflowFailed: IO[EventId] = for {
       evt <- Event.newEvent(runId, WorkflowFailed)
@@ -165,13 +161,12 @@ object WorkflowRuntime {
 
     def logStepStarted(
         step: Workflow.Step[_],
-        state: StateRef
+        parentId: EventId
     ): IO[EventId] =
       for {
-        linkedEventId <- state.get.map(_.linkedEventId)
         evt <- Event.newEvent(
           runId,
-          StepStarted(step.name, linkedEventId.get) //FIXME Option.get
+          StepStarted(step.name, parentId)
         )
         _ <- backend.registerEvent(evt)
       } yield evt.id
