@@ -15,9 +15,10 @@ object Hello extends IOApp {
     step("step 2", IO(println("comment")), IO(println("revert step 2")))
 
   val step31 =
-    step(
+    step[Unit](
       "step 3-1",
-      IO(Thread.sleep(1000)) *> IO(println("va?")),
+//      IO(Thread.sleep(1000)) *> IO(println("va?")),
+      IO.raiseError(new RuntimeException("oops")),
       IO(println("revert step 3-1"))
     )
   val step32 =
@@ -29,7 +30,8 @@ object Hello extends IOApp {
 
   val step4 = step[Unit](
     "step 4",
-    IO(println("Oh no!")) *> IO.raiseError(new RuntimeException("oops")),
+//    IO(println("Oh no!")) *> IO.raiseError(new RuntimeException("oops")),
+    IO(println("bien")),
     IO(println("should not be execute")),
     retryStrategy = LinearRetry(3)
   )
@@ -38,7 +40,7 @@ object Hello extends IOApp {
     for {
       _ <- step1
       _ <- step2
-      _ <- (step31, step32).parTupled
+      _ <- (step31 :: step31 :: step32 :: Nil).parSequence
       _ <- step4
     } yield ()
   }

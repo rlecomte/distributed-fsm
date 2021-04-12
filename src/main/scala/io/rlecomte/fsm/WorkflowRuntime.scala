@@ -1,13 +1,15 @@
 package io.rlecomte.fsm
 
-import cats.effect.IO
+import cats.Applicative
 import cats.arrow.FunctionK
-import cats.effect.Ref
-import io.circe.Encoder
+import cats.data.Validated.{Valid, Invalid}
+import cats.data.{Nested, ValidatedNel}
+import cats.effect.{IO, Ref}
+import cats.effect.implicits.commutativeApplicativeForParallelF
 import cats.effect.kernel.Par
-import Workflow._
-import cats.Parallel
 import cats.implicits._
+import io.circe.Encoder
+import io.rlecomte.fsm.Workflow._
 
 object WorkflowRuntime {
   case class Ctx(
@@ -44,7 +46,7 @@ object WorkflowRuntime {
 
     private def foldIO(parentId: EventId, state: StateRef): FunctionK[WorkflowOp, IO] =
       new FunctionK[WorkflowOp, IO] {
-        override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
+        override def apply[A](op: WorkflowOp[A]): IO[A] = IO(println("foldIO")).flatMap(_ => { op match {
           case step @ Step(_, _, _, _, encoder) =>
             processStep(step, parentId, state)(encoder)
           case FromSeq(seq) => {
@@ -57,9 +59,9 @@ object WorkflowRuntime {
             def subGraph(parentId: EventId) = Par.ParallelF.value(
               par
                 .foldMap(parFoldIO(parentId, state))(
-                  Parallel[IO, IO.Par].applicative
-                )
-            )
+                  Applicative[Nested[IO.Par, ValidatedNel[Throwable, *], *]]
+//                  Parallel[IO, IO.Par].applicative.compose(Applicative[ValidatedNel[Throwable, *]])
+                ).value)
 
             for {
               parentId <- logParStarted(parentId)
@@ -67,18 +69,26 @@ object WorkflowRuntime {
               ctx <- state.get
               subRollback <- ctx.subs.traverse(_.get).map(_.foldMap(_.rollback))
               _ <- state.update(ctx => ctx.copy(rollback = subRollback *> ctx.rollback, subs = Nil))
-            } yield result
+              realResult <- result match {
+                case Valid(v) => IO.pure(v)
+                case Invalid(e) => IO.raiseError(e.head) // TODO find a way to merge errors
+              }
+            } yield realResult
           }
-        }
+        }})
       }
 
-    private def parFoldIO(parentId: EventId, current: StateRef): FunctionK[WorkflowOp, IO.Par] =
-      new FunctionK[WorkflowOp, IO.Par] {
-        override def apply[A](op: WorkflowOp[A]): IO.Par[A] = Par.ParallelF(for {
-          state <- Ref.of[IO, Ctx](Ctx(rollback = IO.unit, subs = Nil))
-          _ <- current.update(ctx => ctx.copy(subs = state :: ctx.subs))
-          result <- foldIO(parentId, state)(op)
-        } yield result)
+    type IOParValidated[A] = Nested[IO.Par, ValidatedNel[Throwable, *], A]
+
+    private def parFoldIO(parentId: EventId, current: StateRef): FunctionK[WorkflowOp, IOParValidated] =
+      new FunctionK[WorkflowOp, IOParValidated] {
+        override def apply[A](op: WorkflowOp[A]): IOParValidated[A] = Nested {
+          Par.ParallelF(for {
+            state <- Ref.of[IO, Ctx](Ctx(rollback = IO.unit, subs = Nil))
+            _ <- current.update(ctx => ctx.copy(subs = state :: ctx.subs))
+            result <- foldIO(parentId, state)(op).attempt.map(e => e.toValidatedNel)
+          } yield result)
+        }
       }
 
     private def processStep[A](
