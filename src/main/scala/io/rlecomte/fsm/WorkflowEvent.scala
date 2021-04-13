@@ -35,7 +35,7 @@ object Event {
 
 sealed trait WorkflowEvent
 
-case class WorkflowStarted(workflow: String) extends WorkflowEvent
+case class WorkflowStarted(workflow: String, input: Json) extends WorkflowEvent
 
 case object WorkflowCompleted extends WorkflowEvent
 

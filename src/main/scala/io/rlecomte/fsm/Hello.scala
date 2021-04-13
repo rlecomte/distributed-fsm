@@ -17,8 +17,8 @@ object Hello extends IOApp {
   val step31 =
     step[Unit](
       "step 3-1",
-//      IO(Thread.sleep(1000)) *> IO(println("va?")),
-      IO.raiseError(new RuntimeException("oops")),
+      IO(Thread.sleep(1000)) *> IO(println("va?")),
+//      IO.raiseError(new RuntimeException("oops")),
       IO(println("revert step 3-1"))
     )
   val step32 =
@@ -40,14 +40,14 @@ object Hello extends IOApp {
     for {
       _ <- step1
       _ <- step2
-      _ <- (step31 :: step31 :: step32 :: Nil).parSequence
+      _ <- (step31 :: step32 :: Nil).parSequence
       _ <- step4
     } yield ()
   }
 
   override def run(args: List[String]): IO[ExitCode] = for {
     implicit0(backend: BackendEventStore) <- InMemoryBackendEventStore.newStore
-    _ <- program.compile.run(()).attempt
+    _ <- program.compile().run(()).attempt
     _ <- backend.readAllEvents.flatMap(v => v.traverse(evt => IO(println(evt.payload))))
     summary <- new Projection(backend).getSummary
     details <- summary.jobs.traverse { case (_, runId) =>

@@ -9,7 +9,7 @@ import cats.free.FreeApplicative
 import cats.Parallel
 import cats.Applicative
 import cats.~>
-import io.circe.Encoder
+import io.circe.{Decoder, Encoder}
 
 object Workflow {
 
@@ -26,8 +26,12 @@ object Workflow {
       effect: IO[A],
       compensate: IO[Unit] = IO.unit,
       retryStrategy: RetryStrategy,
-      circeEncoder: Encoder[A]
+      circeEncoder: Encoder[A],
+      circeDecoder: Decoder[A]
   ) extends WorkflowOp[A]
+  case class AlreadyProcessedStep[A](
+      name: String,
+      value: A) extends WorkflowOp[A]
   case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
   case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
 
@@ -36,8 +40,8 @@ object Workflow {
       effect: IO[A],
       compensate: IO[Unit],
       retryStrategy: RetryStrategy = NoRetry
-  )(implicit encoder: Encoder[A]): Workflow[A] = {
-    liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy, encoder))
+  )(implicit encoder: Encoder[A], decoder: Decoder[A]): Workflow[A] = {
+    liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy, encoder, decoder))
   }
 
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {
