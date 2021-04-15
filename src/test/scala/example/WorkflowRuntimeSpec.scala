@@ -16,8 +16,6 @@ import io.rlecomte.fsm.WorkflowEvent
 import scala.reflect.ClassTag
 import io.rlecomte.fsm.StepCompleted
 import cats.implicits._
-import scala.concurrent.duration.FiniteDuration
-import java.util.concurrent.TimeUnit
 
 object WorkflowRuntimeSpec extends IOTestSuite {
 
@@ -109,15 +107,15 @@ object WorkflowRuntimeSpec extends IOTestSuite {
             List(
               Workflow.step(
                 name = "step1",
-                effect = waitFiftyMillis *> ref.set(true)
+                effect = ref.set(true)
               ),
               Workflow.step(
                 name = "step2",
-                effect = waitFiftyMillis *> ref2.set(true)
+                effect = ref2.set(true)
               ),
               Workflow.step(
                 name = "step3",
-                effect = waitFiftyMillis *> ref3.set(true)
+                effect = ref3.set(true)
               )
             ).parSequence.void
           }
@@ -156,8 +154,6 @@ object WorkflowRuntimeSpec extends IOTestSuite {
       event: Event
   )(implicit tag: ClassTag[T]): IO[Unit] =
     checkPayloadM[T](event)(_ => IO.unit)
-
-  val waitFiftyMillis: IO[Unit] = IO.sleep(FiniteDuration(50, TimeUnit.MILLISECONDS))
 
   def testW(name: String)(f: BackendEventStore => IO[Unit]): Unit =
     test(name)(backendResource.use(f))
