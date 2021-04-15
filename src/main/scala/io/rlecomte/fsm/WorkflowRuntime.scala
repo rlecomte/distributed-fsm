@@ -74,11 +74,15 @@ object WorkflowRuntime {
 
     private def parFoldIO(parentId: EventId, current: StateRef): FunctionK[WorkflowOp, IO.Par] =
       new FunctionK[WorkflowOp, IO.Par] {
-        override def apply[A](op: WorkflowOp[A]): IO.Par[A] = Par.ParallelF(for {
-          state <- Ref.of[IO, Ctx](Ctx(rollback = IO.unit, subs = Nil))
-          _ <- current.update(ctx => ctx.copy(subs = state :: ctx.subs))
-          result <- foldIO(parentId, state)(op)
-        } yield result)
+        override def apply[A](op: WorkflowOp[A]): IO.Par[A] = {
+          val subProcess = for {
+            state <- Ref.of[IO, Ctx](Ctx(rollback = IO.unit, subs = Nil))
+            _ <- current.update(ctx => ctx.copy(subs = state :: ctx.subs))
+            result <- foldIO(parentId, state)(op)
+          } yield result
+
+          Par.ParallelF(subProcess.uncancelable)
+        }
       }
 
     private def processStep[A](

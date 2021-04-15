@@ -16,6 +16,8 @@ import io.rlecomte.fsm.WorkflowEvent
 import scala.reflect.ClassTag
 import io.rlecomte.fsm.StepCompleted
 import cats.implicits._
+import scala.concurrent.duration.FiniteDuration
+import java.util.concurrent.TimeUnit
 
 object WorkflowRuntimeSpec extends IOTestSuite {
 
@@ -135,6 +137,31 @@ object WorkflowRuntimeSpec extends IOTestSuite {
         _ <- ref2.get.map(assertEquals(_, true))
         _ <- ref3.get.map(assertEquals(_, true))
       } yield ()
+  }
+
+  testW("A failing step shouldn't interrupt parallel step execution") { implicit backend =>
+    val program = for {
+      ref <- Ref.of[IO, Boolean](false)
+      fsm = FSM
+        .define[Unit, Unit]("failing FSM") { _ =>
+          (
+            Workflow.step(
+              name = "failing step",
+              effect = IO.raiseError(new RuntimeException("Oops")).void
+            ),
+            Workflow.step(
+              name = "successful step",
+              effect = IO.sleep(FiniteDuration(30, TimeUnit.MILLISECONDS)) *> ref.set(true)
+            )
+          ).parTupled.void
+        }
+    } yield (fsm, ref)
+
+    for {
+      (fsm, ref) <- program
+      _ <- fsm.compile.run(()).attempt
+      _ <- ref.get.map(assertEquals(_, true))
+    } yield ()
   }
 
   def checkPayloadM[T <: WorkflowEvent](
