@@ -1,4 +1,4 @@
-package example
+package io.rlecomte.fsm
 
 import cats.effect.IO
 import cats.effect.kernel.Resource
