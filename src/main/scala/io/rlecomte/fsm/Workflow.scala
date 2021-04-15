@@ -31,10 +31,12 @@ object Workflow {
   case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
   case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
 
+  def pure[A](value: A): Workflow[A] = Free.pure(value)
+
   def step[A](
       name: String,
       effect: IO[A],
-      compensate: IO[Unit],
+      compensate: IO[Unit] = IO.unit,
       retryStrategy: RetryStrategy = NoRetry
   )(implicit encoder: Encoder[A]): Workflow[A] = {
     liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy, encoder))
