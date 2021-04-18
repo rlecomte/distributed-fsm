@@ -1,25 +1,17 @@
 package io.rlecomte.fsm
 
 import cats.effect.IO
-import cats.effect.kernel.Resource
-import io.rlecomte.fsm.BackendEventStore
-import io.rlecomte.fsm.InMemoryBackendEventStore
 import io.rlecomte.fsm.FSM
 import io.rlecomte.fsm.Workflow
 import io.rlecomte.fsm.WorkflowStarted
 import io.rlecomte.fsm.WorkflowCompleted
 import cats.effect.testing.minitest.IOTestSuite
 import cats.effect.kernel.Ref
-import io.rlecomte.fsm.Event
-import io.rlecomte.fsm.StepStarted
-import io.rlecomte.fsm.WorkflowEvent
-import scala.reflect.ClassTag
-import io.rlecomte.fsm.StepCompleted
 import cats.implicits._
 import scala.concurrent.duration.FiniteDuration
 import java.util.concurrent.TimeUnit
 
-object WorkflowRuntimeSpec extends IOTestSuite {
+object WorkflowRuntimeSpec extends IOTestSuite with WorkflowTestSuite {
 
   testW("An empty FSM execution should generate started and completed event") { implicit backend =>
     val program = FSM
@@ -163,28 +155,4 @@ object WorkflowRuntimeSpec extends IOTestSuite {
       _ <- ref.get.map(assertEquals(_, true))
     } yield ()
   }
-
-  def checkPayloadM[T <: WorkflowEvent](
-      event: Event
-  )(f: T => IO[Unit])(implicit tag: ClassTag[T]): IO[Unit] =
-    event.payload match {
-      case p: T    => f(p)
-      case payload => IO(fail(s"$payload isn't a ${tag.runtimeClass.getName()} event."))
-    }
-
-  def checkPayload[T <: WorkflowEvent](
-      event: Event
-  )(f: T => Unit)(implicit tag: ClassTag[T]): IO[Unit] =
-    checkPayloadM[T](event)(e => IO.pure(f(e)))
-
-  def checkPayload_[T <: WorkflowEvent](
-      event: Event
-  )(implicit tag: ClassTag[T]): IO[Unit] =
-    checkPayloadM[T](event)(_ => IO.unit)
-
-  def testW(name: String)(f: BackendEventStore => IO[Unit]): Unit =
-    test(name)(backendResource.use(f))
-
-  val backendResource: Resource[IO, BackendEventStore] =
-    Resource.eval(InMemoryBackendEventStore.newStore)
 }
