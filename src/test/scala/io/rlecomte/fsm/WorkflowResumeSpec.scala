@@ -34,7 +34,7 @@ object WorkflowResumeSpec extends IOTestSuite with WorkflowTestSuite {
       }
 
     for {
-      (runId, _) <- failingProgram.compile.run(())
+      (runId, _) <- failingProgram.compile.runSync(())
       events <- backend.readAllEvents
       payload = events.map(_.payload)
       _ = assert(payload.contains(WorkflowFailed))
@@ -103,7 +103,7 @@ object WorkflowResumeSpec extends IOTestSuite with WorkflowTestSuite {
       }
 
     for {
-      (runId, _) <- failingProgram.compile.run(())
+      (runId, _) <- failingProgram.compile.runSync(())
 
       _ <- WorkflowResume
         .resume(

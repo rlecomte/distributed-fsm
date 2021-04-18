@@ -171,8 +171,8 @@ object WorkflowRuntime {
   ): CompiledFSM[I, O] = CompiledFSM { input =>
     for {
       runId <- RunId.newRunId
-      result <- new Run(runId, backend).toIO(fsm.name, fsm.workflow(input)).attempt
-    } yield (runId, result)
+      fiber <- new Run(runId, backend).toIO(fsm.name, fsm.workflow(input)).start
+    } yield (runId, fiber)
   }
 
   def resumeWorkflow[O](

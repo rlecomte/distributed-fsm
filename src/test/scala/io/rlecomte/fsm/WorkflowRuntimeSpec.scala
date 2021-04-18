@@ -22,7 +22,7 @@ object WorkflowRuntimeSpec extends IOTestSuite with WorkflowTestSuite {
     val expected = List(WorkflowStarted("empty FSM"), WorkflowCompleted)
 
     for {
-      _ <- program.compile.run(())
+      _ <- program.compile.runSync(())
       events <- backend.readAllEvents
     } yield assertEquals(events.map(_.payload), expected)
   }
@@ -38,7 +38,7 @@ object WorkflowRuntimeSpec extends IOTestSuite with WorkflowTestSuite {
 
     for {
       (fsm, ref) <- program
-      _ <- fsm.compile.run(())
+      _ <- fsm.compile.runSync(())
 
       events <- backend.readAllEvents
       _ = assertEquals(events.length, 4)
@@ -69,7 +69,7 @@ object WorkflowRuntimeSpec extends IOTestSuite with WorkflowTestSuite {
 
       for {
         (fsm, ref, ref2, ref3) <- program
-        _ <- fsm.compile.run(())
+        _ <- fsm.compile.runSync(())
 
         events <- backend.readAllEvents
         _ = assertEquals(events.length, 8)
@@ -117,7 +117,7 @@ object WorkflowRuntimeSpec extends IOTestSuite with WorkflowTestSuite {
 
       for {
         (fsm, ref, ref2, ref3) <- program
-        _ <- fsm.compile.run(())
+        _ <- fsm.compile.runSync(())
 
         events <- backend.readAllEvents
         _ = assertEquals(events.length, 12)
@@ -151,7 +151,7 @@ object WorkflowRuntimeSpec extends IOTestSuite with WorkflowTestSuite {
 
     for {
       (fsm, ref) <- program
-      _ <- fsm.compile.run(()).attempt
+      _ <- fsm.compile.runSync(()).attempt
       _ <- ref.get.map(assertEquals(_, true))
     } yield ()
   }
