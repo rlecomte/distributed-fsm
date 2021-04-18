@@ -12,6 +12,7 @@ import cats.data.Validated
 import cats.data.Nested
 import cats.implicits._
 import cats.effect.IO
+import io.rlecomte.fsm.store.EventStore
 
 object WorkflowResume {
   type AccState[A] = State[IO[Unit], A]
@@ -26,7 +27,7 @@ object WorkflowResume {
   )
 
   def resume[I, O](
-      backend: BackendEventStore,
+      backend: EventStore,
       fsm: FSM[I, O],
       history: RunHistory[I]
   ): ResumedFSM[I, O] = {
@@ -61,7 +62,7 @@ object WorkflowResume {
       }
     }
 
-  def storeCompensation(runId: RunId, backend: BackendEventStore): FunctionK[WorkflowOp, Acc] =
+  def storeCompensation(runId: RunId, backend: EventStore): FunctionK[WorkflowOp, Acc] =
     new FunctionK[WorkflowOp, Acc] {
       override def apply[A](fa: WorkflowOp[A]): Acc[A] = fa match {
         case AlreadyProcessedStep(step, r, c) =>

@@ -2,8 +2,9 @@ package io.rlecomte.fsm
 
 import cats.effect.IO
 import io.rlecomte.fsm.Projection._
+import io.rlecomte.fsm.store.EventStore
 
-class Projection(backend: BackendEventStore) {
+class Projection(backend: EventStore) {
 
   val getSummary: IO[SummaryProjection] = for {
     events <- backend.readAllEvents

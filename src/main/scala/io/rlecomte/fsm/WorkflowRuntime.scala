@@ -6,11 +6,12 @@ import io.circe.Encoder
 import cats.effect.kernel.Par
 import Workflow._
 import cats.Parallel
+import io.rlecomte.fsm.store.EventStore
 
 object WorkflowRuntime {
   private class Run(
       runId: RunId,
-      backend: BackendEventStore
+      backend: EventStore
   ) {
 
     private def foldIO(parentId: EventId): FunctionK[WorkflowOp, IO] =
@@ -165,7 +166,7 @@ object WorkflowRuntime {
   }
 
   def compile[I, O](
-      backend: BackendEventStore,
+      backend: EventStore,
       fsm: FSM[I, O]
   ): CompiledFSM[I, O] = CompiledFSM { input =>
     for {
@@ -175,7 +176,7 @@ object WorkflowRuntime {
   }
 
   def resumeWorkflow[O](
-      backend: BackendEventStore,
+      backend: EventStore,
       runId: RunId,
       fsmName: String,
       workflow: Workflow[O]

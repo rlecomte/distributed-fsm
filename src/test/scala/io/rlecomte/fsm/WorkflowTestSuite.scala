@@ -4,6 +4,8 @@ import cats.effect.testing.minitest.IOTestSuite
 import cats.effect.IO
 import scala.reflect.ClassTag
 import cats.effect.kernel.Resource
+import io.rlecomte.fsm.store.EventStore
+import io.rlecomte.fsm.store.InMemoryEventStore
 
 trait WorkflowTestSuite extends IOTestSuite {
   def checkPayloadM[T <: WorkflowEvent](
@@ -24,9 +26,9 @@ trait WorkflowTestSuite extends IOTestSuite {
   )(implicit tag: ClassTag[T]): IO[Unit] =
     checkPayloadM[T](event)(_ => IO.unit)
 
-  def testW(name: String)(f: BackendEventStore => IO[Unit]): Unit =
+  def testW(name: String)(f: EventStore => IO[Unit]): Unit =
     test(name)(backendResource.use(f))
 
-  val backendResource: Resource[IO, BackendEventStore] =
-    Resource.eval(InMemoryBackendEventStore.newStore)
+  val backendResource: Resource[IO, EventStore] =
+    Resource.eval(InMemoryEventStore.newStore)
 }

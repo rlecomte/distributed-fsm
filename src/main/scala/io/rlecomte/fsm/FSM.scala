@@ -2,11 +2,12 @@ package io.rlecomte.fsm
 
 import Workflow._
 import cats.effect.IO
+import io.rlecomte.fsm.store.EventStore
 
 case class FSM[I, O](name: String, workflow: I => Workflow[O]) {
 
   def compile(implicit
-      backend: BackendEventStore
+      backend: EventStore
   ): CompiledFSM[I, O] = WorkflowRuntime.compile(backend, this)
 }
 
