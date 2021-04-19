@@ -34,6 +34,20 @@ object Workflow {
       extends WorkflowOp[A]
   case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
   case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
+  case class Suspend[A, B](
+      name: String,
+      first: SuspendToken => IO[Unit],
+      second: A => IO[B],
+      compensate: IO[Unit] = IO.unit,
+      decoder: Decoder[A],
+      encoder: Encoder[B]
+  ) extends WorkflowOp[B]
+  case class PendingSuspend[A](
+      name: String,
+      second: IO[A],
+      compensate: IO[Unit] = IO.unit,
+      encoder: Encoder[A]
+  ) extends WorkflowOp[A]
 
   def pure[A](value: A): Workflow[A] = Free.pure(value)
 
@@ -44,6 +58,15 @@ object Workflow {
       retryStrategy: RetryStrategy = NoRetry
   )(implicit encoder: Encoder[A], decoder: Decoder[A]): Workflow[A] = {
     liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy, encoder, decoder))
+  }
+
+  def suspend[A, B](
+      name: String,
+      first: SuspendToken => IO[Unit],
+      second: A => IO[B],
+      compensate: IO[Unit]
+  )(implicit decoder: Decoder[A], encoder: Encoder[B]): Workflow[B] = {
+    liftF[WorkflowOp, B](Suspend(name, first, second, compensate, decoder, encoder))
   }
 
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {

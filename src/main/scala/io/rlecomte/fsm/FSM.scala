@@ -12,14 +12,15 @@ case class FSM[I, O](name: String, workflow: I => Workflow[O]) {
   ): CompiledFSM[I, O] = WorkflowRuntime.compile(backend, this)
 }
 
-case class CompiledFSM[I, O](runAsync: I => IO[(RunId, FiberIO[O])]) extends AnyVal {
-  def runSync(input: I): IO[(RunId, Outcome[IO, Throwable, O])] = for {
+case class CompiledFSM[I, O](runAsync: I => IO[(RunId, FiberIO[WorkflowResult[O]])])
+    extends AnyVal {
+  def runSync(input: I): IO[(RunId, Outcome[IO, Throwable, WorkflowResult[O]])] = for {
     (runId, fiber) <- runAsync(input)
     outcome <- fiber.join
   } yield (runId, outcome)
 }
 
-case class ResumedFSM[I, O](run: IO[O], compensate: IO[Unit])
+case class ResumedFSM[I, O](run: IO[WorkflowResult[O]], compensate: IO[Unit])
 
 object FSM {
   def define[I, O](name: String)(f: I => Workflow[O]): FSM[I, O] = FSM(name, f)

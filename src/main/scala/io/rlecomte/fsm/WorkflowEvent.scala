@@ -20,6 +20,18 @@ case class StepCompleted(
     payload: Json
 ) extends WorkflowEvent
 
+case class SuspendFirstStepStarted(step: String, correlationId: EventId) extends WorkflowEvent
+
+case class SuspendFirstStepCompleted(step: String) extends WorkflowEvent
+
+case class SuspendFirstStepFailed(step: String, error: WorkflowError) extends WorkflowEvent
+
+case class SuspendSecondStepStarted(step: String) extends WorkflowEvent
+
+case class SuspendSecondStepCompleted(step: String, payload: Json) extends WorkflowEvent
+
+case class SuspendSecondStepFailed(step: String, error: WorkflowError) extends WorkflowEvent
+
 case class StepFailed(
     step: String,
     error: WorkflowError
