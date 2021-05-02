@@ -22,11 +22,11 @@ scalacOptions := ScalacOptions
 lazy val root = (project in file("."))
   .settings(
     name := "distributed-fsm",
-    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.0.0",
+    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.1.0",
     libraryDependencies += "org.typelevel" %% "cats-free" % "2.3.1",
-    libraryDependencies += "io.monix" %% "minitest" % "2.9.4" % "test",
-    libraryDependencies += "org.typelevel" %% "cats-effect-testing-minitest" % "1.0.0" % Test,
-    libraryDependencies += scalaTest % Test,
+    libraryDependencies += scalacheckEffect % Test,
+    libraryDependencies += scalacheckEffectMunit % Test,
+    libraryDependencies += catsEffectMunit % Test,
     libraryDependencies ++= Seq(
       "io.circe" %% "circe-core",
       "io.circe" %% "circe-generic",
@@ -37,6 +37,6 @@ lazy val root = (project in file("."))
 addCompilerPlugin("org.typelevel" % "kind-projector" % "0.11.3" cross CrossVersion.full)
 addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
 
-testFrameworks += new TestFramework("minitest.runner.Framework")
+testFrameworks += new TestFramework("munit.Framework")
 
 // See https://www.scala-sbt.org/1.x/docs/Using-Sonatype.html for instructions on how to publish to Sonatype.

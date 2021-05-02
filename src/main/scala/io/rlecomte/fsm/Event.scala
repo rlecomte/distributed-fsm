@@ -1,12 +1,12 @@
 package io.rlecomte.fsm
 
 import java.time.Instant
-import io.rlecomte.fsm.store.SeqNum
+import io.rlecomte.fsm.store.Version
 
 case class Event(
     id: EventId,
     runId: RunId,
-    seqNum: SeqNum,
+    seqNum: Version,
     timestamp: Instant,
     payload: WorkflowEvent
 )

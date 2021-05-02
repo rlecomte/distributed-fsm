@@ -22,7 +22,7 @@ import io.rlecomte.fsm.SeqStarted
 
 case class WorkflowState(
     runId: RunId,
-    seqNum: SeqNum,
+    seqNum: Version,
     input: Json,
     successfulSteps: Map[String, Json],
     failedSteps: Set[String],
@@ -45,7 +45,7 @@ object WorkflowState {
     store.readEvents(runId).map(_.foldLeft(Option.empty[WorkflowState])(hydrateState))
   }
 
-  def hydrateState(state: Option[WorkflowState], event: Event): Option[WorkflowState] =
+  def hydrateState(state: Option[WorkflowState], event: Event): Option[WorkflowState] = {
     (event.payload, state) match {
       case (WorkflowStarted(_, input), _) =>
         Some(
@@ -98,4 +98,5 @@ object WorkflowState {
       case (ParStarted(_), s) => s
       case (_, _)             => None
     }
+  }.map(_.copy(seqNum = event.seqNum))
 }

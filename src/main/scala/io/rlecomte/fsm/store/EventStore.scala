@@ -5,19 +5,17 @@ import io.rlecomte.fsm.Event
 import io.rlecomte.fsm.RunId
 import io.rlecomte.fsm.WorkflowEvent
 import io.rlecomte.fsm.EventId
+import io.rlecomte.fsm.runtime.VersionConflict
 
-sealed trait Version
-case object EmptyVersion extends Version
-case class SeqNum(value: Int) extends Version
+case class Version(value: Long)
 
 object Version {
-  def inc(v: Version): SeqNum = v match {
-    case EmptyVersion => SeqNum(0)
-    case SeqNum(i)    => SeqNum(i + 1)
-  }
-}
+  val empty: Version = Version(0L)
 
-case class VersionConflict(expected: Version, current: Version) extends Exception
+  def inc(v: Version): Version = Version(v.value + 1)
+
+  implicit val versionOrdering: Ordering[Version] = Ordering.Long.on(_.value)
+}
 
 trait EventStore {
   def registerEvent(

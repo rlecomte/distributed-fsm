@@ -18,11 +18,11 @@ import io.circe.Encoder
 import io.rlecomte.fsm.StepCompensationStarted
 import io.rlecomte.fsm.StepCompensationFailed
 import io.rlecomte.fsm.StepCompensationCompleted
-import io.rlecomte.fsm.store.VersionConflict
 import io.rlecomte.fsm.CompensationStarted
 import io.rlecomte.fsm.CompensationCompleted
 import io.rlecomte.fsm.CompensationFailed
 import io.rlecomte.fsm.store.Version
+import io.rlecomte.fsm.runtime.VersionConflict
 
 object EventLogger {
 
