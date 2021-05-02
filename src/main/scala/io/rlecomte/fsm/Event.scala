@@ -1,18 +1,12 @@
 package io.rlecomte.fsm
 
 import java.time.Instant
-import java.util.UUID
-import cats.effect.IO
+import io.rlecomte.fsm.store.Version
 
 case class Event(
-    id: EventId = EventId(UUID.randomUUID()),
+    id: EventId,
     runId: RunId,
-    timestamp: Instant = Instant.now(),
+    seqNum: Version,
+    timestamp: Instant,
     payload: WorkflowEvent
 )
-
-object Event {
-  def newEvent(runId: RunId, payload: WorkflowEvent): IO[Event] = IO(
-    Event(runId = runId, payload = payload)
-  )
-}

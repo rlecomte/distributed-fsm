@@ -4,7 +4,7 @@ import io.circe.Json
 
 sealed trait WorkflowEvent
 
-case class WorkflowStarted(workflow: String) extends WorkflowEvent
+case class WorkflowStarted(workflow: String, input: Json) extends WorkflowEvent
 
 case object WorkflowCompleted extends WorkflowEvent
 
@@ -34,3 +34,9 @@ case class StepCompensationStarted(step: String) extends WorkflowEvent
 case class StepCompensationCompleted(step: String) extends WorkflowEvent
 
 case class StepCompensationFailed(step: String, error: WorkflowError) extends WorkflowEvent
+
+case object CompensationStarted extends WorkflowEvent
+
+case object CompensationCompleted extends WorkflowEvent
+
+case object CompensationFailed extends WorkflowEvent
