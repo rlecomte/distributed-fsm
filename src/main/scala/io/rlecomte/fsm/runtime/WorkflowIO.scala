@@ -4,52 +4,65 @@ import cats.effect.IO
 import cats.arrow.FunctionK
 import io.circe.Encoder
 import cats.effect.kernel.Par
-import cats.Parallel
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
 import io.rlecomte.fsm.store.EventStore
+import cats.data.EitherT
+import cats.data.Validated
+import cats.Applicative
+import cats.effect.implicits._
+import cats.implicits._
 
 class WorkflowIO(runId: RunId, backend: EventStore) {
 
-  def foldIO(parentId: EventId): FunctionK[WorkflowOp, IO] =
-    new FunctionK[WorkflowOp, IO] {
-      override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
+  type Eff[A] = EitherT[IO, Unit, A]
+  type ParEff[A] = IO.Par[Validated[Unit, A]]
+
+  val parEffApp = Applicative[IO.Par].compose(Applicative[Validated[Unit, *]])
+
+  def foldIO(parentId: EventId): FunctionK[WorkflowOp, Eff] =
+    new FunctionK[WorkflowOp, Eff] {
+      override def apply[A](op: WorkflowOp[A]): Eff[A] = op match {
         case step @ Step(_, _, _, _, encoder, _) =>
-          processStep(step, parentId)(encoder)
+          EitherT.liftF[IO, Unit, A](processStep(step, parentId)(encoder))
 
         case AlreadyProcessedStep(_, result, _) =>
-          IO.pure(result)
+          EitherT.pure[IO, Unit](result)
 
         case FromSeq(seq) => {
           for {
-            parentId <- EventLogger.logSeqStarted(backend, runId, parentId)
+            parentId <- EitherT.liftF[IO, Unit, EventId](
+              EventLogger.logSeqStarted(backend, runId, parentId)
+            )
             result <- seq.foldMap(foldIO(parentId))
           } yield result
         }
+
         case FromPar(par) => {
-          def subGraph(parentId: EventId) = Par.ParallelF.value(
-            par
-              .foldMap(parFoldIO(parentId))(
-                Parallel[IO, IO.Par].applicative
+          def subGraph(parentId: EventId) = EitherT(
+            Par.ParallelF
+              .value(
+                par
+                  .foldMap(parFoldIO(parentId))(parEffApp)
               )
+              .map(_.toEither)
           )
 
           for {
-            parentId <- EventLogger.logParStarted(backend, runId, parentId)
+            parentId <- EitherT.liftF[IO, Unit, EventId](
+              EventLogger.logParStarted(backend, runId, parentId)
+            )
             result <- subGraph(parentId)
           } yield result
         }
       }
     }
 
-  private def parFoldIO(parentId: EventId): FunctionK[WorkflowOp, IO.Par] =
-    new FunctionK[WorkflowOp, IO.Par] {
-      override def apply[A](op: WorkflowOp[A]): IO.Par[A] = {
-        val subProcess = for {
-          result <- foldIO(parentId)(op)
-        } yield result
-
-        Par.ParallelF(subProcess.uncancelable)
+  private def parFoldIO(parentId: EventId): FunctionK[WorkflowOp, ParEff] =
+    new FunctionK[WorkflowOp, ParEff] {
+      override def apply[A](op: WorkflowOp[A]): ParEff[A] = {
+        val subProcess = foldIO(parentId)(op)
+        Par.ParallelF(subProcess.value.map(_.toValidated).uncancelable)
       }
     }
 

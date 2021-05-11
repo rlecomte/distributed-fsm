@@ -19,7 +19,7 @@ object WorkflowRuntime {
 
   def start[I, O](store: EventStore, fsm: FSM[I, O], input: I)(implicit
       encoder: Encoder[I]
-  ): IO[(RunId, FiberIO[O])] = {
+  ): IO[(RunId, FiberIO[Option[O]])] = {
     for {
       runId <- RunId.newRunId
       r <- launch(store, runId, fsm.name, input, fsm.workflow(input), Version.empty)
@@ -29,7 +29,7 @@ object WorkflowRuntime {
 
   def startSync[I, O](store: EventStore, fsm: FSM[I, O], input: I)(implicit
       encoder: Encoder[I]
-  ): IO[(RunId, O)] = {
+  ): IO[(RunId, Option[O])] = {
     start(store, fsm, input)(encoder).flatMap { case (runId, fib) =>
       fib.join.flatMap {
         _.fold(
@@ -48,7 +48,7 @@ object WorkflowRuntime {
   )(implicit
       decoder: Decoder[I],
       encoder: Encoder[I]
-  ): IO[Either[StateError, FiberIO[O]]] = {
+  ): IO[Either[StateError, FiberIO[Option[O]]]] = {
     WorkflowResume.resume(runId, store, fsm).flatMap {
       case Left(err) =>
         IO.pure(Left(err))
@@ -64,7 +64,7 @@ object WorkflowRuntime {
   )(implicit
       decoder: Decoder[I],
       encoder: Encoder[I]
-  ): IO[Either[StateError, O]] = resume(store, fsm, runId).flatMap {
+  ): IO[Either[StateError, Option[O]]] = resume(store, fsm, runId).flatMap {
     case Right(fib) =>
       fib.join.flatMap { outcome =>
         outcome.fold(
@@ -116,7 +116,7 @@ object WorkflowRuntime {
       input: I,
       workflow: Workflow[O],
       version: Version
-  )(implicit encoder: Encoder[I]): IO[Either[StateError, FiberIO[O]]] =
+  )(implicit encoder: Encoder[I]): IO[Either[StateError, FiberIO[Option[O]]]] =
     EventLogger.logWorkflowStarted(store, name, runId, input, version)(encoder).flatMap {
 
       case Right(parentId) =>
@@ -124,6 +124,8 @@ object WorkflowRuntime {
 
         workflow
           .foldMap(runner.foldIO(parentId))
+          .value
+          .map(_.toOption)
           .attempt
           .flatMap {
             case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
