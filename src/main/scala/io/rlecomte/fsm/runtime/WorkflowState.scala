@@ -4,21 +4,8 @@ import io.rlecomte.fsm.RunId
 import io.circe.Json
 import io.rlecomte.fsm.store._
 import cats.effect.IO
-import io.rlecomte.fsm.Event
-import io.rlecomte.fsm.WorkflowCompleted
-import io.rlecomte.fsm.WorkflowStarted
-import io.rlecomte.fsm.WorkflowFailed
-import io.rlecomte.fsm.StepFailed
-import io.rlecomte.fsm.StepStarted
-import io.rlecomte.fsm.StepCompleted
-import io.rlecomte.fsm.StepCompensationCompleted
-import io.rlecomte.fsm.StepCompensationStarted
-import io.rlecomte.fsm.StepCompensationFailed
-import io.rlecomte.fsm.CompensationStarted
-import io.rlecomte.fsm.CompensationCompleted
-import io.rlecomte.fsm.CompensationFailed
-import io.rlecomte.fsm.ParStarted
-import io.rlecomte.fsm.SeqStarted
+import io.rlecomte.fsm._
+import io.rlecomte.fsm.Workflow.AsyncStepToken
 
 case class WorkflowState(
     runId: RunId,
@@ -28,6 +15,7 @@ case class WorkflowState(
     failedSteps: Set[String],
     compensatedSteps: Set[String],
     failedCompensationSteps: Set[String],
+    suspendedSteps: Map[AsyncStepToken, List[(String, Json)]],
     status: WorkflowState.StateStatus
 )
 
@@ -37,15 +25,18 @@ object WorkflowState {
   case object Started extends StateStatus
   case object Completed extends StateStatus
   case object Failed extends StateStatus
+  case object Suspended extends StateStatus
   case object StateCompensationStarted extends StateStatus
   case object StateCompensationFailed extends StateStatus
   case object StateCompensationCompleted extends StateStatus
 
   def loadState(store: EventStore, runId: RunId): IO[Option[WorkflowState]] = {
-    store.readEvents(runId).map(_.foldLeft(Option.empty[WorkflowState])(hydrateState))
+    store.readEvents(runId).map(_.foldLeft(Option.empty[WorkflowState])(hydrateState(runId)))
   }
 
-  def hydrateState(state: Option[WorkflowState], event: Event): Option[WorkflowState] = {
+  def hydrateState(
+      runId: RunId
+  )(state: Option[WorkflowState], event: Event): Option[WorkflowState] = {
     (event.payload, state) match {
       case (WorkflowStarted(_, input), _) =>
         Some(
@@ -57,6 +48,7 @@ object WorkflowState {
             Set.empty,
             Set.empty,
             Set.empty,
+            Map.empty,
             Started
           )
         )
@@ -75,6 +67,12 @@ object WorkflowState {
 
       case (StepFailed(step, _), Some(s)) =>
         Some(s.copy(failedSteps = s.failedSteps + step))
+
+      case (StepFeeded(evtId, waitForId, payload), Some(s)) =>
+        val token = AsyncStepToken(runId, evtId)
+        val feeds = (waitForId, payload) :: s.suspendedSteps.getOrElse(token, Nil)
+        val suspendedSteps = s.suspendedSteps + ((token, feeds))
+        Some(s.copy(suspendedSteps = suspendedSteps))
 
       case (StepCompensationStarted(_), Some(s)) =>
         Some(s)

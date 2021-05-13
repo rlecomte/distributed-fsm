@@ -2,13 +2,13 @@ package io.rlecomte.fsm.runtime
 
 import io.rlecomte.fsm.WorkflowStarted
 import io.rlecomte.fsm.WorkflowCompleted
+import io.rlecomte.fsm.WorkflowSuspended
 import io.rlecomte.fsm.SeqStarted
 import io.rlecomte.fsm.ParStarted
 import io.rlecomte.fsm.store.EventStore
 import io.rlecomte.fsm.EventId
 import io.rlecomte.fsm.RunId
 import io.rlecomte.fsm.WorkflowFailed
-import io.rlecomte.fsm.Workflow.Step
 import io.rlecomte.fsm.StepStarted
 import io.rlecomte.fsm.StepCompleted
 import io.rlecomte.fsm.StepFailed
@@ -40,6 +40,11 @@ object EventLogger {
       runId: RunId
   ): IO[EventId] = backend.unsafeRegisterEvent(runId, WorkflowCompleted)
 
+  def logWorkflowSuspended(
+      backend: EventStore,
+      runId: RunId
+  ): IO[EventId] = backend.unsafeRegisterEvent(runId, WorkflowSuspended)
+
   def logSeqStarted(backend: EventStore, runId: RunId, parentId: EventId): IO[EventId] =
     backend.unsafeRegisterEvent(runId, SeqStarted(parentId))
 
@@ -57,33 +62,33 @@ object EventLogger {
   def logStepStarted(
       backend: EventStore,
       runId: RunId,
-      step: Step[_],
+      step: String,
       parentId: EventId
   ): IO[EventId] =
     backend.unsafeRegisterEvent(
       runId,
-      StepStarted(step.name, parentId)
+      StepStarted(step, parentId)
     )
 
   def logStepCompleted[A](
       backend: EventStore,
       runId: RunId,
-      step: Step[A],
+      step: String,
       result: A
   )(implicit encoder: Encoder[A]): IO[EventId] =
     backend.unsafeRegisterEvent(
       runId,
-      StepCompleted(step.name, encoder(result))
+      StepCompleted(step, encoder(result))
     )
 
   def logStepFailed(
       backend: EventStore,
       runId: RunId,
-      step: Step[_],
+      step: String,
       error: Throwable
   ): IO[EventId] = backend.unsafeRegisterEvent(
     runId,
-    StepFailed(step.name, WorkflowError.fromThrowable(error))
+    StepFailed(step, WorkflowError.fromThrowable(error))
   )
 
   def logStepCompensationStarted(

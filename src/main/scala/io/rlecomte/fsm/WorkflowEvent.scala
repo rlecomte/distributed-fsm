@@ -8,6 +8,8 @@ case class WorkflowStarted(workflow: String, input: Json) extends WorkflowEvent
 
 case object WorkflowCompleted extends WorkflowEvent
 
+case object WorkflowSuspended extends WorkflowEvent
+
 case object WorkflowFailed extends WorkflowEvent
 
 case class StepStarted(
@@ -23,6 +25,12 @@ case class StepCompleted(
 case class StepFailed(
     step: String,
     error: WorkflowError
+) extends WorkflowEvent
+
+case class StepFeeded(
+    correlationId: EventId,
+    waitForId: String,
+    payload: Json
 ) extends WorkflowEvent
 
 case class SeqStarted(correlationId: EventId) extends WorkflowEvent

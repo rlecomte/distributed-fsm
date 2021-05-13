@@ -2,7 +2,6 @@ package io.rlecomte.fsm.runtime
 
 import cats.effect.IO
 import cats.arrow.FunctionK
-import io.circe.Encoder
 import cats.effect.kernel.Par
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
@@ -23,8 +22,13 @@ class WorkflowIO(runId: RunId, backend: EventStore) {
   def foldIO(parentId: EventId): FunctionK[WorkflowOp, Eff] =
     new FunctionK[WorkflowOp, Eff] {
       override def apply[A](op: WorkflowOp[A]): Eff[A] = op match {
-        case step @ Step(_, _, _, _, encoder, _) =>
-          EitherT.liftF[IO, Unit, A](processStep(step, parentId)(encoder))
+        case step @ Step(_, _, _, _, _, _) =>
+          EitherT.liftF[IO, Unit, A](processStep(step, parentId))
+
+        case asyncStep @ AsyncStep(_, _, _, _, _) =>
+          EitherT(processAsyncStep(asyncStep, parentId).as(Either.left[Unit, A](())))
+
+        case PendingAsyncStep(_, _, _, _) => EitherT.fromEither(Left(()))
 
         case AlreadyProcessedStep(_, result, _) =>
           EitherT.pure[IO, Unit](result)
@@ -69,21 +73,31 @@ class WorkflowIO(runId: RunId, backend: EventStore) {
   private def processStep[A](
       step: Step[A],
       parentId: EventId
-  )(implicit encoder: Encoder[A]): IO[A] = {
-    EventLogger.logStepStarted(backend, runId, step, parentId) *> step.effect.attempt.flatMap {
+  ): IO[A] = {
+    EventLogger.logStepStarted(backend, runId, step.name, parentId) *> step.effect.attempt.flatMap {
       case Right(a) =>
-        EventLogger.logStepCompleted(backend, runId, step, a).as(a)
+        EventLogger.logStepCompleted(backend, runId, step.name, a)(step.circeEncoder).as(a)
       case Left(err) =>
         retry(step, parentId, err)
     }
   }
 
+  private def processAsyncStep[A](
+      step: AsyncStep[A],
+      parentId: EventId
+  ): IO[Unit] = for {
+    eventId <- EventLogger.logStepStarted(backend, runId, step.name, parentId)
+    _ <- step.effect(AsyncStepToken(runId, eventId)).attempt.flatMap {
+      case Right(_) => IO.unit
+      case Left(err) =>
+        EventLogger.logStepFailed(backend, runId, step.name, err) *> IO.raiseError(err)
+    }
+  } yield ()
+
   private def retry[A](
       step: Step[A],
       parentId: EventId,
       err: Throwable
-  )(implicit
-      encoder: Encoder[A]
   ): IO[A] = {
     val retryIO = step.retryStrategy match {
       case NoRetry | LinearRetry(0) =>
@@ -95,6 +109,6 @@ class WorkflowIO(runId: RunId, backend: EventStore) {
         )
     }
 
-    EventLogger.logStepFailed(backend, runId, step, err) *> retryIO
+    EventLogger.logStepFailed(backend, runId, step.name, err) *> retryIO
   }
 }

@@ -23,8 +23,8 @@ object WorkflowResume {
       WorkflowState.loadState(store, runId).map(_.toRight(CantResumeState))
     )
     (input, workflow) <- state.status match {
-      case WorkflowState.Completed | WorkflowState.Failed =>
-        EitherT.fromEither[IO](resumeFromState(fsm, state.input, state.successfulSteps))
+      case WorkflowState.Completed | WorkflowState.Failed | WorkflowState.Suspended =>
+        EitherT.fromEither[IO](resumeFromState(fsm, state.input, state))
       case _ =>
         EitherT[IO, StateError, (I, Workflow[O])](IO.pure(Left(CantResumeState)))
     }
@@ -33,25 +33,32 @@ object WorkflowResume {
   def resumeFromState[I, O](
       fsm: FSM[I, O],
       input: Json,
-      alreadyProcessedStep: Map[String, Json]
+      state: WorkflowState
   )(implicit decoder: Decoder[I]): Either[StateError, (I, Workflow[O])] = for {
     input <- decoder.decodeJson(input).left.map(err => CantDecodePayload(err.message))
-    workflow = fsm.workflow(input).compile(resumeWorkflow(alreadyProcessedStep))
+    workflow = fsm.workflow(input).compile(resumeWorkflow(state))
   } yield (input, workflow)
 
-  def resumeWorkflow(alreadyProcessedStep: Map[String, Json]): FunctionK[WorkflowOp, WorkflowOp] =
+  def resumeWorkflow(state: WorkflowState): FunctionK[WorkflowOp, WorkflowOp] =
     new FunctionK[WorkflowOp, WorkflowOp] {
       override def apply[A](fa: WorkflowOp[A]): WorkflowOp[A] = fa match {
         case step @ Step(name, _, compensate, _, _, decoder) =>
-          alreadyProcessedStep
+          state.successfulSteps
             .get(name)
             .flatMap(input => decoder.decodeJson(input).toOption)
             .map(result => AlreadyProcessedStep(name, result, compensate))
             .getOrElse(step)
 
-        case FromSeq(op) => FromSeq(op.compile(resumeWorkflow(alreadyProcessedStep)))
+        //case step @ AsyncStep(name, _, waitFor, _, decoder) =>
+        //  state.successfulSteps
+        //    .get(name)
+        //    .flatMap(input => decoder.decodeJson(input).toOption)
+        //    .map(result => AlreadyProcessedStep(name, result, IO.unit))
+        //    .getOrElse(step)
 
-        case FromPar(op) => FromPar(op.compile(resumeWorkflow(alreadyProcessedStep)))
+        case FromSeq(op) => FromSeq(op.compile(resumeWorkflow(state)))
+
+        case FromPar(op) => FromPar(op.compile(resumeWorkflow(state)))
 
         case other => other
       }

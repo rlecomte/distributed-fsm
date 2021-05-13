@@ -11,6 +11,7 @@ import cats.Applicative
 import cats.~>
 import io.circe.Encoder
 import io.circe.Decoder
+import io.rlecomte.fsm.WaitFor._
 
 object Workflow {
 
@@ -22,6 +23,7 @@ object Workflow {
   case class LinearRetry(nbRetry: Int) extends RetryStrategy
 
   sealed trait WorkflowOp[A]
+
   case class Step[A](
       name: String,
       effect: IO[A],
@@ -30,8 +32,27 @@ object Workflow {
       circeEncoder: Encoder[A],
       circeDecoder: Decoder[A]
   ) extends WorkflowOp[A]
+
+  case class AsyncStepToken(runId: RunId, id: EventId)
+
+  case class AsyncStep[A](
+      name: String,
+      effect: AsyncStepToken => IO[Unit],
+      waitFor: WaitFor[A],
+      circeEncoder: Encoder[A],
+      circeDecoder: Decoder[A]
+  ) extends WorkflowOp[A]
+
+  case class PendingAsyncStep[A](
+      name: String,
+      waitFor: WaitFor[A],
+      circeEncoder: Encoder[A],
+      circeDecoder: Decoder[A]
+  ) extends WorkflowOp[A]
+
   case class AlreadyProcessedStep[A](name: String, result: A, compensate: IO[Unit])
       extends WorkflowOp[A]
+
   case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
   case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
 
@@ -44,6 +65,12 @@ object Workflow {
       retryStrategy: RetryStrategy = NoRetry
   )(implicit encoder: Encoder[A], decoder: Decoder[A]): Workflow[A] = {
     liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy, encoder, decoder))
+  }
+
+  def asyncStep[A](name: String, effect: AsyncStepToken => IO[Unit])(
+      waitFor: WaitFor[A]
+  ): Workflow[A] = {
+    liftF(AsyncStep(name, effect, waitFor))
   }
 
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {

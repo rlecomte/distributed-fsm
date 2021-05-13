@@ -128,8 +128,9 @@ object WorkflowRuntime {
           .map(_.toOption)
           .attempt
           .flatMap {
-            case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
-            case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
+            case Right(Some(a)) => EventLogger.logWorkflowCompleted(store, runId).as(Some(a))
+            case Right(None)    => EventLogger.logWorkflowSuspended(store, runId).as(None)
+            case Left(e)        => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
           }
           .start
           .map(Right(_))
