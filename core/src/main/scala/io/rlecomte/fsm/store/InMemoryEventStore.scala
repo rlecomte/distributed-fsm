@@ -8,10 +8,10 @@ import java.time.Instant
 import io.rlecomte.fsm.WorkflowEvent
 import io.rlecomte.fsm.EventId
 import io.rlecomte.fsm.runtime.VersionConflict
-import cats.effect.std.Queue
+import cats.effect.kernel.Ref
 
 case class InMemoryEventStore(
-    ref: Queue[IO, Vector[Event]]
+    ref: Ref[IO, Vector[Event]]
 ) extends EventStore {
 
   override def unsafeRegisterEvent(
@@ -19,16 +19,18 @@ case class InMemoryEventStore(
       event: WorkflowEvent
   ): IO[EventId] = {
     for {
-      events <- ref.take
-      currentVersion = events
-        .filter(_.runId == runId)
-        .map[Version](_.seqNum)
-        .maxOption
-        .getOrElse(Version.empty)
       evtId <- IO(EventId(UUID.randomUUID()))
       inst <- IO(Instant.now())
-      evt = Event(evtId, runId, Version.inc(currentVersion), inst, event)
-      _ <- ref.offer(events.appended(evt))
+      _ <- ref.update { events =>
+        val currentVersion = events
+          .filter(_.runId == runId)
+          .map[Version](_.seqNum)
+          .maxOption
+          .getOrElse(Version.empty)
+
+        val evt = Event(evtId, runId, Version.inc(currentVersion), inst, event)
+        events.appended(evt)
+      }
     } yield evtId
   }
 
@@ -38,24 +40,25 @@ case class InMemoryEventStore(
       expectedVersion: Version
   ): IO[Either[VersionConflict, EventId]] = {
     for {
-      events <- ref.take
-      currentVersion = events
-        .filter(_.runId == runId)
-        .map[Version](_.seqNum)
-        .maxOption
-        .getOrElse(Version.empty)
       evtId <- IO(EventId(UUID.randomUUID()))
       inst <- IO(Instant.now())
-      evt = Event(evtId, runId, Version.inc(currentVersion), inst, event)
-      result <-
+      result <- ref.modify { events =>
+        val currentVersion = events
+          .filter(_.runId == runId)
+          .map[Version](_.seqNum)
+          .maxOption
+          .getOrElse(Version.empty)
+
+        val evt = Event(evtId, runId, Version.inc(currentVersion), inst, event)
+
         if (expectedVersion.value == currentVersion.value)
-          ref.offer(events.appended(evt)).as(Right(evtId))
-        else ref.offer(events).as(Left(VersionConflict(expectedVersion, currentVersion)))
+          (events.appended(evt), Right(evtId))
+        else (events, Left(VersionConflict(expectedVersion, currentVersion)))
+      }
     } yield result
   }
 
-  override def readAllEvents: IO[List[Event]] =
-    ref.take.bracket(v => IO(v.toList))(v => ref.offer(v))
+  override def readAllEvents: IO[List[Event]] = ref.get.map(_.toList)
 
   override def readEvents(runId: RunId): IO[List[Event]] =
     readAllEvents.map(_.filter(_.runId == runId))
@@ -63,7 +66,6 @@ case class InMemoryEventStore(
 
 object InMemoryEventStore {
   val newStore: IO[InMemoryEventStore] = for {
-    ref <- Queue.bounded[IO, Vector[Event]](1)
-    _ <- ref.offer(Vector())
+    ref <- Ref.of[IO, Vector[Event]](Vector())
   } yield InMemoryEventStore(ref)
 }

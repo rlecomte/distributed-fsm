@@ -138,9 +138,9 @@ object Projection {
 
   def mk(state: Option[State], event: Event): Option[State] = event.payload match {
     case WorkflowStarted(_, _) => Some(State(Seq(event.id, Nil)))
-    case SeqStarted(correlationId) =>
+    case SeqStarted(correlationId, _) =>
       state.map(_.entryPoint.update(correlationId, Seq(event.id, Nil))).map(State.apply)
-    case ParStarted(correlationId) =>
+    case ParStarted(correlationId, _) =>
       state.map(_.entryPoint.update(correlationId, Par(event.id, Nil))).map(State.apply)
     case StepStarted(step, correlationId) =>
       state.map(_.entryPoint.update(correlationId, Step(step))).map(State.apply)

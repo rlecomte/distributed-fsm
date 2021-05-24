@@ -31,14 +31,14 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
   val startedState: Ctx = Fix {
     CtxF { event =>
       event.payload match {
-        case WorkflowFailed      => Right(stoppedState)
-        case WorkflowCompleted   => Right(stoppedState)
-        case StepStarted(_, _)   => Right(startedState)
-        case StepCompleted(_, _) => Right(startedState)
-        case StepFailed(_, _)    => Right(startedState)
-        case ParStarted(_)       => Right(startedState)
-        case SeqStarted(_)       => Right(startedState)
-        case s                   => Left(errorMsg("started state", s))
+        case WorkflowFailed            => Right(stoppedState)
+        case WorkflowCompleted         => Right(stoppedState)
+        case StepStarted(_, _)         => Right(startedState)
+        case StepCompleted(_, _, _, _) => Right(startedState)
+        case StepFailed(_, _)          => Right(startedState)
+        case ParStarted(_, _)          => Right(startedState)
+        case SeqStarted(_, _)          => Right(startedState)
+        case s                         => Left(errorMsg("started state", s))
       }
     }
   }
@@ -48,6 +48,7 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
       event.payload match {
         case WorkflowStarted(_, _) => Right(startedState)
         case CompensationStarted   => Right(startedCompensation)
+        case WorkflowResumed       => Right(startedState)
         case s                     => Left(errorMsg("stopped state", s))
       }
     }

@@ -6,6 +6,8 @@ sealed trait WorkflowEvent
 
 case class WorkflowStarted(workflow: String, input: Json) extends WorkflowEvent
 
+case object WorkflowResumed extends WorkflowEvent
+
 case object WorkflowCompleted extends WorkflowEvent
 
 case object WorkflowFailed extends WorkflowEvent
@@ -17,7 +19,9 @@ case class StepStarted(
 
 case class StepCompleted(
     step: String,
-    payload: Json
+    payload: Json,
+    correlationId: EventId,
+    parNum: Int
 ) extends WorkflowEvent
 
 case class StepFailed(
@@ -25,9 +29,9 @@ case class StepFailed(
     error: WorkflowError
 ) extends WorkflowEvent
 
-case class SeqStarted(correlationId: EventId) extends WorkflowEvent
+case class SeqStarted(correlationId: EventId, parNum: Int) extends WorkflowEvent
 
-case class ParStarted(correlationId: EventId) extends WorkflowEvent
+case class ParStarted(correlationId: EventId, parNum: Int) extends WorkflowEvent
 
 case class StepCompensationStarted(step: String) extends WorkflowEvent
 
