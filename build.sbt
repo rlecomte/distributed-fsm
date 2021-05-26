@@ -43,8 +43,3 @@ lazy val core = (project in file("core"))
 lazy val examples = (project in file("examples"))
   .dependsOn(core)
   .settings()
-<<<<<<< HEAD
-
-// See https://www.scala-sbt.org/1.x/docs/Using-Sonatype.html for instructions on how to publish to Sonatype.
-=======
->>>>>>> State consolidation
