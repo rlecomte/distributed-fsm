@@ -7,7 +7,7 @@ import io.circe.Encoder
 import io.circe.Decoder
 import io.rlecomte.fsm.store._
 import io.rlecomte.fsm.Workflow._
-import Resume._
+import WorkflowResume._
 import cats.implicits._
 
 sealed trait StateError extends Exception
@@ -51,7 +51,7 @@ object WorkflowRuntime {
   )(implicit
       decoder: Decoder[I]
   ): IO[Either[StateError, FiberIO[O]]] = {
-    Resume.resumeRun(store, runId, fsm).flatMap {
+    WorkflowResume.resumeRun(store, runId, fsm).flatMap {
       case Left(err) =>
         IO.pure(Left(err))
       case Right(ResumeRunPayload(version, workflow)) =>
@@ -83,7 +83,7 @@ object WorkflowRuntime {
       fsm: FSM[I, O],
       runId: RunId
   )(implicit decoder: Decoder[I]): IO[Either[StateError, Unit]] = {
-    Resume.compensate(store, runId, fsm).flatMap {
+    WorkflowResume.compensate(store, runId, fsm).flatMap {
       case Left(err) => IO.pure(Left(err))
       case Right(CompensateRunPayload(version, steps)) =>
         launchCompensation[I, O](store, runId, steps, version)
