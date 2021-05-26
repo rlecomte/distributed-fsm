@@ -9,6 +9,7 @@ import io.rlecomte.fsm.store._
 import io.rlecomte.fsm.Workflow._
 import WorkflowResume._
 import cats.implicits._
+import io.rlecomte.fsm.EventId
 
 sealed trait StateError extends Exception
 case class CantDecodePayload(err: String) extends StateError
@@ -136,19 +137,7 @@ object WorkflowRuntime {
       version: Version
   )(implicit encoder: Encoder[I]): IO[Either[StateError, FiberIO[O]]] =
     EventLogger.logWorkflowStarted(store, name, runId, input, version)(encoder).flatMap {
-
-      case Right(parentId) =>
-        val runner = new WorkflowIO(runId, store)
-
-        workflow
-          .foldMap(runner.foldIO(parentId, 1))
-          .attempt
-          .flatMap {
-            case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
-            case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
-          }
-          .start
-          .map(Right(_))
+      case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
 
       case Left(err) => IO.pure(Left(err))
     }
@@ -160,22 +149,29 @@ object WorkflowRuntime {
       version: Version
   ): IO[Either[StateError, FiberIO[O]]] =
     EventLogger.logWorkflowResumed(store, runId, version).flatMap {
-
-      case Right(parentId) =>
-        val runner = new WorkflowIO(runId, store)
-
-        workflow
-          .foldMap(runner.foldIO(parentId, 1))
-          .attempt
-          .flatMap {
-            case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
-            case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
-          }
-          .start
-          .map(Right(_))
+      case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
 
       case Left(err) => IO.pure(Left(err))
     }
+
+  private def startWorkflow[O](
+      store: EventStore,
+      runId: RunId,
+      parentId: EventId,
+      workflow: Workflow[O]
+  ): IO[Either[StateError, FiberIO[O]]] = {
+    val runner = new WorkflowIO(runId, store)
+
+    workflow
+      .foldMap(runner.foldIO(parentId, 0))
+      .attempt
+      .flatMap {
+        case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
+        case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
+      }
+      .start
+      .map(Right(_))
+  }
 
   //def feed(fsm: FSM[_, _], token: SuspendToken, payload: Json): IO[Unit] = ???
 }
