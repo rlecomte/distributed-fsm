@@ -32,14 +32,6 @@ object EventLogger {
   ): IO[Either[VersionConflict, EventId]] =
     backend.registerEvent(runId, WorkflowResumed, expectedVersion)
 
-  def logSeqStarted(
-      backend: EventStore,
-      runId: RunId,
-      parentId: EventId,
-      parNum: Int
-  ): IO[EventId] =
-    backend.unsafeRegisterEvent(runId, SeqStarted(parentId, parNum))
-
   def logParStarted(
       backend: EventStore,
       runId: RunId,

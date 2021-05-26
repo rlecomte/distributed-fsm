@@ -29,8 +29,6 @@ case class StepFailed(
     error: WorkflowError
 ) extends WorkflowEvent
 
-case class SeqStarted(correlationId: EventId, parNum: Int) extends WorkflowEvent
-
 case class ParStarted(correlationId: EventId, parNum: Int) extends WorkflowEvent
 
 case class StepCompensationStarted(step: String) extends WorkflowEvent

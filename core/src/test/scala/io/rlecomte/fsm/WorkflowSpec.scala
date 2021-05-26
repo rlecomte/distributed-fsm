@@ -37,7 +37,6 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
         case StepCompleted(_, _, _, _) => Right(startedState)
         case StepFailed(_, _)          => Right(startedState)
         case ParStarted(_, _)          => Right(startedState)
-        case SeqStarted(_, _)          => Right(startedState)
         case s                         => Left(errorMsg("started state", s))
       }
     }
