@@ -1,15 +1,17 @@
 package io.rlecomte.fsm.runtime
 
-import io.rlecomte.fsm.FSM
-import cats.effect.{IO, FiberIO}
-import io.rlecomte.fsm.RunId
-import io.circe.Encoder
-import io.circe.Decoder
-import io.rlecomte.fsm.store._
-import io.rlecomte.fsm.Workflow._
-import WorkflowResume._
+import cats.effect.FiberIO
+import cats.effect.IO
 import cats.implicits._
+import io.circe.Decoder
+import io.circe.Encoder
 import io.rlecomte.fsm.EventId
+import io.rlecomte.fsm.FSM
+import io.rlecomte.fsm.RunId
+import io.rlecomte.fsm.Workflow._
+import io.rlecomte.fsm.store._
+
+import WorkflowResume._
 
 sealed trait StateError extends Exception
 case class CantDecodePayload(err: String) extends StateError

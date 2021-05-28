@@ -1,13 +1,13 @@
 package io.rlecomte.fsm.runtime
 
-import cats.implicits._
-import cats.free.Free
-import cats.~>
-import cats.Functor
-import io.rlecomte.fsm.Workflow.WorkflowOp
-import cats.free.FreeApplicative
-import cats.data.StateT
 import cats.Applicative
+import cats.Functor
+import cats.data.StateT
+import cats.free.Free
+import cats.free.FreeApplicative
+import cats.implicits._
+import cats.~>
+import io.rlecomte.fsm.Workflow.WorkflowOp
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
 

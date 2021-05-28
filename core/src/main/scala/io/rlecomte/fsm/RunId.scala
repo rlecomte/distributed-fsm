@@ -1,7 +1,8 @@
 package io.rlecomte.fsm
 
-import java.util.UUID
 import cats.effect.IO
+
+import java.util.UUID
 
 case class RunId(value: UUID) extends AnyVal
 

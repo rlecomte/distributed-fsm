@@ -2,9 +2,9 @@ package io.rlecomte.fsm.store
 
 import cats.effect.IO
 import io.rlecomte.fsm.Event
+import io.rlecomte.fsm.EventId
 import io.rlecomte.fsm.RunId
 import io.rlecomte.fsm.WorkflowEvent
-import io.rlecomte.fsm.EventId
 import io.rlecomte.fsm.runtime.VersionConflict
 
 case class Version(value: Long)

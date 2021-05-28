@@ -1,14 +1,15 @@
 package io.rlecomte.fsm.store
 
 import cats.effect.IO
-import io.rlecomte.fsm.Event
-import io.rlecomte.fsm.RunId
-import java.util.UUID
-import java.time.Instant
-import io.rlecomte.fsm.WorkflowEvent
-import io.rlecomte.fsm.EventId
-import io.rlecomte.fsm.runtime.VersionConflict
 import cats.effect.kernel.Ref
+import io.rlecomte.fsm.Event
+import io.rlecomte.fsm.EventId
+import io.rlecomte.fsm.RunId
+import io.rlecomte.fsm.WorkflowEvent
+import io.rlecomte.fsm.runtime.VersionConflict
+
+import java.time.Instant
+import java.util.UUID
 
 case class InMemoryEventStore(
     ref: Ref[IO, Vector[Event]]

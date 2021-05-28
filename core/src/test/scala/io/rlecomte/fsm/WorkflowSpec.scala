@@ -1,14 +1,14 @@
 package io.rlecomte.fsm
 
-import io.rlecomte.fsm.store.InMemoryEventStore
-import munit.ScalaCheckEffectSuite
-import munit.CatsEffectSuite
-import org.scalacheck.effect.PropF
-import cats.effect.kernel.Resource
-import io.rlecomte.fsm._
-import io.rlecomte.fsm.test._
-import cats.implicits._
 import cats.effect.IO
+import cats.effect.kernel.Resource
+import cats.implicits._
+import io.rlecomte.fsm._
+import io.rlecomte.fsm.store.InMemoryEventStore
+import io.rlecomte.fsm.test._
+import munit.CatsEffectSuite
+import munit.ScalaCheckEffectSuite
+import org.scalacheck.effect.PropF
 
 class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
 
@@ -84,4 +84,9 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
       } yield assert(result.isRight, result)
     }
   }
+
+  // sequential steps
+  // paralell steps
+  // sequential random fail
+  // parallel random fail
 }

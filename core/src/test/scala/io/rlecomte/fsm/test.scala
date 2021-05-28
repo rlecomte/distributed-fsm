@@ -1,18 +1,19 @@
 package io.rlecomte.fsm
 
-import cats.effect.IO
-import org.scalacheck.Gen
-import io.rlecomte.fsm.Workflow._
-import cats.implicits._
-import scala.concurrent.duration.FiniteDuration
-import java.util.concurrent.TimeUnit
-import io.rlecomte.fsm.RunId
-import io.rlecomte.fsm.store.EventStore
-import io.rlecomte.fsm.runtime.WorkflowRuntime
-import io.rlecomte.fsm.FSM
-import io.rlecomte.fsm.runtime.StateError
 import cats.data.WriterT
+import cats.effect.IO
+import cats.implicits._
+import io.rlecomte.fsm.FSM
+import io.rlecomte.fsm.RunId
+import io.rlecomte.fsm.Workflow._
+import io.rlecomte.fsm.runtime.StateError
+import io.rlecomte.fsm.runtime.WorkflowRuntime
+import io.rlecomte.fsm.store.EventStore
 import org.scalacheck.Arbitrary
+import org.scalacheck.Gen
+
+import java.util.concurrent.TimeUnit
+import scala.concurrent.duration.FiniteDuration
 
 object test {
 

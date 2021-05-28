@@ -1,12 +1,13 @@
 package io.rlecomte.fsm.examples
 
-import cats.effect.{IO, IOApp}
 import cats.effect.ExitCode
-import io.circe.Encoder
+import cats.effect.IO
+import cats.effect.IOApp
 import io.circe.Decoder
+import io.circe.Encoder
+import io.rlecomte.fsm.FSM
 import io.rlecomte.fsm.runtime.WorkflowRuntime
 import io.rlecomte.fsm.store.InMemoryEventStore
-import io.rlecomte.fsm.FSM
 
 object MarketPlaceSaga extends IOApp {
 

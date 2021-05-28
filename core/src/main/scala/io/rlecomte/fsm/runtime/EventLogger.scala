@@ -1,13 +1,13 @@
 package io.rlecomte.fsm.runtime
 
-import io.rlecomte.fsm.store.EventStore
 import cats.effect.IO
 import io.circe.Encoder
-import io.rlecomte.fsm._
-import io.rlecomte.fsm.store.Version
-import io.rlecomte.fsm.runtime.VersionConflict
 import io.circe.Json
 import io.rlecomte.fsm.Workflow.Step
+import io.rlecomte.fsm._
+import io.rlecomte.fsm.runtime.VersionConflict
+import io.rlecomte.fsm.store.EventStore
+import io.rlecomte.fsm.store.Version
 
 object EventLogger {
 

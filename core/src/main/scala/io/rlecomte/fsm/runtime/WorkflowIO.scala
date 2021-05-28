@@ -1,9 +1,9 @@
 package io.rlecomte.fsm.runtime
 
-import cats.effect.IO
-import cats.arrow.FunctionK
-import cats.effect.kernel.Par
 import cats.Parallel
+import cats.arrow.FunctionK
+import cats.effect.IO
+import cats.effect.kernel.Par
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
 import io.rlecomte.fsm.store.EventStore

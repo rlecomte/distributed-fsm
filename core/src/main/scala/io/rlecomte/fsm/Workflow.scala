@@ -1,19 +1,19 @@
 package io.rlecomte.fsm
 
-import cats.effect.IO
+import cats.Applicative
+import cats.Functor
 import cats.Monad
+import cats.Parallel
+import cats.arrow.FunctionK
+import cats.data.State
+import cats.effect.IO
 import cats.free.Free
 import cats.free.Free.liftF
-import cats.arrow.FunctionK
 import cats.free.FreeApplicative
-import cats.Parallel
-import cats.Applicative
 import cats.~>
-import io.circe.Encoder
 import io.circe.Decoder
+import io.circe.Encoder
 import io.circe.Json
-import cats.Functor
-import cats.data.State
 
 object Workflow {
 

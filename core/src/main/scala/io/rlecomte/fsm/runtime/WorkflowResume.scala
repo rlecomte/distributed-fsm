@@ -1,10 +1,10 @@
 package io.rlecomte.fsm.runtime
 
-import cats.implicits._
+import cats.effect.IO
 import cats.free.Free
+import cats.implicits._
 import io.circe.Decoder
 import io.rlecomte.fsm.Workflow._
-import cats.effect.IO
 import io.rlecomte.fsm._
 import io.rlecomte.fsm.store.EventStore
 import io.rlecomte.fsm.store.Version
