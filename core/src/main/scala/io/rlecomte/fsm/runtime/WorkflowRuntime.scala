@@ -1,16 +1,22 @@
 package io.rlecomte.fsm.runtime
 
-import io.rlecomte.fsm.FSM
-import cats.effect.{IO, FiberIO}
-import io.rlecomte.fsm.RunId
-import io.circe.Encoder
+import cats.effect.FiberIO
+import cats.effect.IO
+import cats.implicits._
 import io.circe.Decoder
-import io.rlecomte.fsm.store._
+import io.circe.Encoder
+import io.rlecomte.fsm.EventId
+import io.rlecomte.fsm.FSM
+import io.rlecomte.fsm.RunId
 import io.rlecomte.fsm.Workflow._
+import io.rlecomte.fsm.store._
+
+import WorkflowResume._
 
 sealed trait StateError extends Exception
 case class CantDecodePayload(err: String) extends StateError
 case object CantResumeState extends StateError
+case class IncoherentState(error: String) extends StateError
 case object CantCompensateState extends StateError
 case object NoResult extends StateError
 case class VersionConflict(expected: Version, current: Version) extends StateError
@@ -46,14 +52,13 @@ object WorkflowRuntime {
       fsm: FSM[I, O],
       runId: RunId
   )(implicit
-      decoder: Decoder[I],
-      encoder: Encoder[I]
+      decoder: Decoder[I]
   ): IO[Either[StateError, FiberIO[O]]] = {
-    WorkflowResume.resume(runId, store, fsm).flatMap {
+    WorkflowResume.resumeRun(store, runId, fsm).flatMap {
       case Left(err) =>
         IO.pure(Left(err))
-      case Right(WorkflowResume(version, input, workflow)) =>
-        launch(store, runId, fsm.name, input, workflow, version)
+      case Right(ResumeRunPayload(version, workflow)) =>
+        launchResume(store, runId, workflow, version)
     }
   }
 
@@ -62,8 +67,7 @@ object WorkflowRuntime {
       fsm: FSM[I, O],
       runId: RunId
   )(implicit
-      decoder: Decoder[I],
-      encoder: Encoder[I]
+      decoder: Decoder[I]
   ): IO[Either[StateError, O]] = resume(store, fsm, runId).flatMap {
     case Right(fib) =>
       fib.join.flatMap { outcome =>
@@ -82,23 +86,23 @@ object WorkflowRuntime {
       fsm: FSM[I, O],
       runId: RunId
   )(implicit decoder: Decoder[I]): IO[Either[StateError, Unit]] = {
-    WorkflowResume.resume(runId, store, fsm).flatMap {
+    WorkflowResume.compensate(store, runId, fsm).flatMap {
       case Left(err) => IO.pure(Left(err))
-      case Right(WorkflowResume(version, _, workflow)) =>
-        launchCompensation[I, O](store, runId, workflow, version)
+      case Right(CompensateRunPayload(version, steps)) =>
+        launchCompensation[I, O](store, runId, steps, version)
     }
   }
 
   private def launchCompensation[I, O](
       store: EventStore,
       runId: RunId,
-      workflow: Workflow[O],
+      compensations: List[Step[_]],
       version: Version
   ): IO[Either[StateError, Unit]] =
     EventLogger.logCompensationStarted(store, runId, version).flatMap {
       case Right(_) =>
-        WorkflowCompensate
-          .compensate(store, runId, workflow)
+        compensations
+          .foldMap(s => compensateStep(store, runId, s.name, s.compensate))
           .attempt
           .flatMap {
             case Right(_) => EventLogger.logCompensationCompleted(store, runId).void
@@ -109,6 +113,23 @@ object WorkflowRuntime {
       case Left(err) => IO.pure(Left(err))
     }
 
+  private def compensateStep(
+      backend: EventStore,
+      runId: RunId,
+      step: String,
+      compensation: IO[Unit]
+  ): IO[Unit] = {
+    for {
+      _ <- EventLogger.logStepCompensationStarted(backend, runId, step)
+      r <- compensation.attempt
+      rr <- r match {
+        case Right(v) => EventLogger.logStepCompensationCompleted(backend, runId, step).as(v)
+        case Left(err) =>
+          EventLogger.logStepCompensationFailed(backend, runId, step, err) *> IO.raiseError(err)
+      }
+    } yield rr
+  }
+
   private def launch[I, O](
       store: EventStore,
       runId: RunId,
@@ -118,24 +139,41 @@ object WorkflowRuntime {
       version: Version
   )(implicit encoder: Encoder[I]): IO[Either[StateError, FiberIO[O]]] =
     EventLogger.logWorkflowStarted(store, name, runId, input, version)(encoder).flatMap {
-
-      case Right(parentId) =>
-        val runner = new WorkflowIO(runId, store)
-
-        workflow
-          .foldMap(runner.foldIO(parentId))
-          .attempt
-          .flatMap {
-            case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
-            case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
-          }
-          .start
-          .map(Right(_))
+      case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
 
       case Left(err) => IO.pure(Left(err))
     }
 
-  //def result[I, O](fsm: FSM[I, O], runId: RunId): IO[Either[StateError, O]] = ???
+  private def launchResume[O](
+      store: EventStore,
+      runId: RunId,
+      workflow: Workflow[O],
+      version: Version
+  ): IO[Either[StateError, FiberIO[O]]] =
+    EventLogger.logWorkflowResumed(store, runId, version).flatMap {
+      case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
+
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  private def startWorkflow[O](
+      store: EventStore,
+      runId: RunId,
+      parentId: EventId,
+      workflow: Workflow[O]
+  ): IO[Either[StateError, FiberIO[O]]] = {
+    val runner = new WorkflowIO(runId, store)
+
+    workflow
+      .foldMap(runner.foldIO(parentId, 0))
+      .attempt
+      .flatMap {
+        case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
+        case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
+      }
+      .start
+      .map(Right(_))
+  }
 
   //def feed(fsm: FSM[_, _], token: SuspendToken, payload: Json): IO[Unit] = ???
 }

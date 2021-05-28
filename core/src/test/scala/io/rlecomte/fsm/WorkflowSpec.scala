@@ -1,14 +1,14 @@
 package io.rlecomte.fsm
 
-import io.rlecomte.fsm.store.InMemoryEventStore
-import munit.ScalaCheckEffectSuite
-import munit.CatsEffectSuite
-import org.scalacheck.effect.PropF
-import cats.effect.kernel.Resource
-import io.rlecomte.fsm._
-import io.rlecomte.fsm.test._
-import cats.implicits._
 import cats.effect.IO
+import cats.effect.kernel.Resource
+import cats.implicits._
+import io.rlecomte.fsm._
+import io.rlecomte.fsm.store.InMemoryEventStore
+import io.rlecomte.fsm.test._
+import munit.CatsEffectSuite
+import munit.ScalaCheckEffectSuite
+import org.scalacheck.effect.PropF
 
 class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
 
@@ -31,14 +31,13 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
   val startedState: Ctx = Fix {
     CtxF { event =>
       event.payload match {
-        case WorkflowFailed      => Right(stoppedState)
-        case WorkflowCompleted   => Right(stoppedState)
-        case StepStarted(_, _)   => Right(startedState)
-        case StepCompleted(_, _) => Right(startedState)
-        case StepFailed(_, _)    => Right(startedState)
-        case ParStarted(_)       => Right(startedState)
-        case SeqStarted(_)       => Right(startedState)
-        case s                   => Left(errorMsg("started state", s))
+        case WorkflowFailed            => Right(stoppedState)
+        case WorkflowCompleted         => Right(stoppedState)
+        case StepStarted(_, _)         => Right(startedState)
+        case StepCompleted(_, _, _, _) => Right(startedState)
+        case StepFailed(_, _)          => Right(startedState)
+        case ParStarted(_, _)          => Right(startedState)
+        case s                         => Left(errorMsg("started state", s))
       }
     }
   }
@@ -48,6 +47,7 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
       event.payload match {
         case WorkflowStarted(_, _) => Right(startedState)
         case CompensationStarted   => Right(startedCompensation)
+        case WorkflowResumed       => Right(startedState)
         case s                     => Left(errorMsg("stopped state", s))
       }
     }
@@ -84,4 +84,9 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
       } yield assert(result.isRight, result)
     }
   }
+
+  // sequential steps
+  // paralell steps
+  // sequential random fail
+  // parallel random fail
 }

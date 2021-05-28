@@ -1,21 +1,24 @@
 package io.rlecomte.fsm
 
-import cats.effect.IO
+import cats.Applicative
+import cats.Functor
 import cats.Monad
+import cats.Parallel
+import cats.arrow.FunctionK
+import cats.data.State
+import cats.effect.IO
 import cats.free.Free
 import cats.free.Free.liftF
-import cats.arrow.FunctionK
 import cats.free.FreeApplicative
-import cats.Parallel
-import cats.Applicative
 import cats.~>
-import io.circe.Encoder
 import io.circe.Decoder
+import io.circe.Encoder
+import io.circe.Json
 
 object Workflow {
 
   type Workflow[A] = Free[WorkflowOp, A]
-  type ParWorkflow[A] = FreeApplicative[WorkflowOp, A]
+  type ParWorkflow[A] = State[Int, FreeApplicative[IndexedWorkflow, A]]
 
   sealed trait RetryStrategy
   case object NoRetry extends RetryStrategy
@@ -24,16 +27,23 @@ object Workflow {
   sealed trait WorkflowOp[A]
   case class Step[A](
       name: String,
-      effect: IO[A],
+      effect: IO[(Json, A)],
       compensate: IO[Unit] = IO.unit,
       retryStrategy: RetryStrategy,
-      circeEncoder: Encoder[A],
       circeDecoder: Decoder[A]
   ) extends WorkflowOp[A]
-  case class AlreadyProcessedStep[A](name: String, result: A, compensate: IO[Unit])
-      extends WorkflowOp[A]
-  case class FromPar[A](pstep: ParWorkflow[A]) extends WorkflowOp[A]
-  case class FromSeq[A](step: Workflow[A]) extends WorkflowOp[A]
+  case class FromPar[A](pstep: FreeApplicative[IndexedWorkflow, A]) extends WorkflowOp[A]
+
+  case class IndexedWorkflow[A](parNum: Int, workflow: Workflow[A])
+
+  implicit val functorWorkflowOp: Functor[WorkflowOp] = new Functor[WorkflowOp] {
+    override def map[A, B](fa: WorkflowOp[A])(f: A => B): WorkflowOp[B] = fa match {
+      case Step(name, effect, compensate, retryStrategy, circeDecoder) =>
+        Step(name, effect.map(t => (t._1, f(t._2))), compensate, retryStrategy, circeDecoder.map(f))
+
+      case FromPar(pstep) => FromPar(pstep.map(f))
+    }
+  }
 
   def pure[A](value: A): Workflow[A] = Free.pure(value)
 
@@ -43,15 +53,13 @@ object Workflow {
       compensate: IO[Unit] = IO.unit,
       retryStrategy: RetryStrategy = NoRetry
   )(implicit encoder: Encoder[A], decoder: Decoder[A]): Workflow[A] = {
-    liftF[WorkflowOp, A](Step(name, effect, compensate, retryStrategy, encoder, decoder))
+    liftF[WorkflowOp, A](
+      Step(name, effect.map(r => (encoder(r), r)), compensate, retryStrategy, decoder)
+    )
   }
 
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {
-    liftF[WorkflowOp, A](FromPar(par))
-  }
-
-  def fromSeq[A](seq: Workflow[A]): ParWorkflow[A] = {
-    cats.free.FreeApplicative.lift[WorkflowOp, A](FromSeq(seq))
+    liftF[WorkflowOp, A](FromPar(par.runEmptyA.value))
   }
 
   implicit val parallel: Parallel[Workflow] = new Parallel[Workflow] {
@@ -64,13 +72,14 @@ object Workflow {
 
     override def parallel: Workflow ~> ParWorkflow =
       new FunctionK[Workflow, ParWorkflow] {
-        override def apply[A](fa: Workflow[A]): ParWorkflow[A] = fromSeq(fa)
+        override def apply[A](fa: Workflow[A]): ParWorkflow[A] =
+          State(idx => (idx + 1, FreeApplicative.lift(IndexedWorkflow(idx, fa))))
       }
 
     override def applicative: Applicative[ParWorkflow] =
-      implicitly[Applicative[ParWorkflow]]
+      Applicative[State[Int, *]].compose(Applicative[FreeApplicative[IndexedWorkflow, *]])
 
-    override def monad: Monad[Workflow] = implicitly[Monad[Workflow]]
+    override def monad: Monad[Workflow] = Monad[Workflow]
 
   }
 }

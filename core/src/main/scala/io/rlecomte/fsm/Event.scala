@@ -1,7 +1,8 @@
 package io.rlecomte.fsm
 
-import java.time.Instant
 import io.rlecomte.fsm.store.Version
+
+import java.time.Instant
 
 case class Event(
     id: EventId,

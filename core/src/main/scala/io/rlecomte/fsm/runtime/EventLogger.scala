@@ -1,28 +1,13 @@
 package io.rlecomte.fsm.runtime
 
-import io.rlecomte.fsm.WorkflowStarted
-import io.rlecomte.fsm.WorkflowCompleted
-import io.rlecomte.fsm.SeqStarted
-import io.rlecomte.fsm.ParStarted
-import io.rlecomte.fsm.store.EventStore
-import io.rlecomte.fsm.EventId
-import io.rlecomte.fsm.RunId
-import io.rlecomte.fsm.WorkflowFailed
-import io.rlecomte.fsm.Workflow.Step
-import io.rlecomte.fsm.StepStarted
-import io.rlecomte.fsm.StepCompleted
-import io.rlecomte.fsm.StepFailed
-import io.rlecomte.fsm.WorkflowError
 import cats.effect.IO
 import io.circe.Encoder
-import io.rlecomte.fsm.StepCompensationStarted
-import io.rlecomte.fsm.StepCompensationFailed
-import io.rlecomte.fsm.StepCompensationCompleted
-import io.rlecomte.fsm.CompensationStarted
-import io.rlecomte.fsm.CompensationCompleted
-import io.rlecomte.fsm.CompensationFailed
-import io.rlecomte.fsm.store.Version
+import io.circe.Json
+import io.rlecomte.fsm.Workflow.Step
+import io.rlecomte.fsm._
 import io.rlecomte.fsm.runtime.VersionConflict
+import io.rlecomte.fsm.store.EventStore
+import io.rlecomte.fsm.store.Version
 
 object EventLogger {
 
@@ -40,14 +25,19 @@ object EventLogger {
       runId: RunId
   ): IO[EventId] = backend.unsafeRegisterEvent(runId, WorkflowCompleted)
 
-  def logSeqStarted(backend: EventStore, runId: RunId, parentId: EventId): IO[EventId] =
-    backend.unsafeRegisterEvent(runId, SeqStarted(parentId))
+  def logWorkflowResumed(
+      backend: EventStore,
+      runId: RunId,
+      expectedVersion: Version
+  ): IO[Either[VersionConflict, EventId]] =
+    backend.registerEvent(runId, WorkflowResumed, expectedVersion)
 
   def logParStarted(
       backend: EventStore,
       runId: RunId,
-      parentId: EventId
-  ): IO[EventId] = backend.unsafeRegisterEvent(runId, ParStarted(parentId))
+      parentId: EventId,
+      parNum: Int
+  ): IO[EventId] = backend.unsafeRegisterEvent(runId, ParStarted(parentId, parNum))
 
   def logWorkflowFailed(
       backend: EventStore,
@@ -69,11 +59,13 @@ object EventLogger {
       backend: EventStore,
       runId: RunId,
       step: Step[A],
-      result: A
-  )(implicit encoder: Encoder[A]): IO[EventId] =
+      result: Json,
+      parentId: EventId,
+      parNum: Int
+  ): IO[EventId] =
     backend.unsafeRegisterEvent(
       runId,
-      StepCompleted(step.name, encoder(result))
+      StepCompleted(step.name, result, parentId, parNum)
     )
 
   def logStepFailed(
