@@ -24,7 +24,7 @@ object test {
     implicit def arbitrary(implicit store: EventStore): Arbitrary[WorkflowExecutionPlan] =
       Arbitrary[WorkflowExecutionPlan] {
         for {
-          workflow <- workflowGen
+          workflow <- Gen.sized(workflowGen)
           nbPar <- Gen.choose(2, 10)
           actions <- Gen.listOfN(nbPar, Gen.choose(1, 30).flatMap(i => Gen.listOfN(i, actionGen)))
         } yield WorkflowExecutionPlan(randomRun(store, workflow, actions))
@@ -47,25 +47,28 @@ object test {
     )
   } yield step(name, effect, compensateEffect)
 
-  def serialStepsGen: Gen[Workflow[Unit]] = for {
-    first <- workflowGen
-    second <- workflowGen
+  def serialStepsGen(size: Int): Gen[Workflow[Unit]] = for {
+    first <- workflowGen(size)
+    second <- workflowGen(size)
   } yield first.flatMap(_ => second)
 
-  def parStepsGen: Gen[Workflow[Unit]] = for {
+  def parStepsGen(size: Int): Gen[Workflow[Unit]] = for {
     nbPar <- Gen.choose[Int](2, 5)
     steps <- Gen.listOfN(
       nbPar,
-      workflowGen
+      workflowGen(size)
     )
   } yield steps.parSequence.as(())
 
-  def workflowGen: Gen[Workflow[Unit]] = Gen.lzy {
-    Gen.frequency(
-      (4, stepGen),
-      (1, Gen.lzy(serialStepsGen)),
-      (1, Gen.lzy(parStepsGen))
-    )
+  def workflowGen(size: Int): Gen[Workflow[Unit]] = Gen.lzy {
+    if (size <= 0) stepGen
+    else {
+      Gen.frequency(
+        (1, stepGen),
+        (1, serialStepsGen(size - 1)),
+        (1, parStepsGen(size - 1))
+      )
+    }
   }
 
   sealed trait Action

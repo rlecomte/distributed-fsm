@@ -16,6 +16,12 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
   case class Fix[F[_]](unfix: F[Fix[F]])
   type Ctx = Fix[CtxF]
 
+  override def scalaCheckTestParameters =
+    super.scalaCheckTestParameters
+      .withMinSize(1)
+      .withMaxSize(2000)
+      .withMinSuccessfulTests(500)
+
   def errorMsg(state: String, event: WorkflowEvent): String =
     s"[$state] don't accept event [$event]"
 
@@ -45,10 +51,9 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
   val stoppedState: Ctx = Fix {
     CtxF { event =>
       event.payload match {
-        case WorkflowStarted(_, _) => Right(startedState)
-        case CompensationStarted   => Right(startedCompensation)
-        case WorkflowResumed       => Right(startedState)
-        case s                     => Left(errorMsg("stopped state", s))
+        case CompensationStarted => Right(startedCompensation)
+        case WorkflowResumed     => Right(startedState)
+        case s                   => Left(errorMsg("stopped state", s))
       }
     }
   }
@@ -84,9 +89,4 @@ class WorkflowResumeSpec extends CatsEffectSuite with ScalaCheckEffectSuite {
       } yield assert(result.isRight, result)
     }
   }
-
-  // sequential steps
-  // paralell steps
-  // sequential random fail
-  // parallel random fail
 }
