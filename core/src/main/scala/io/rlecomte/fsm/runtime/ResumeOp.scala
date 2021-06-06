@@ -40,8 +40,8 @@ object ResumeOp {
 
   implicit val functorResumeOp: Functor[ResumeOp] = new Functor[ResumeOp] {
     def map[A, B](fa: ResumeOp[A])(f: A => B): ResumeOp[B] = fa match {
-      case ResumeStep(Step(n, e, c, r, d)) =>
-        ResumeStep(Step(n, e.map { case (j, p) => (j, f(p)) }, c, r, d.map(f)))
+      case ResumeStep(Step(n, e, r, c, d)) =>
+        ResumeStep(Step(n, e.map { case (j, p) => (j, f(p)) }, r, c, d.map(f)))
       case RunningPar(id, sub) => RunningPar(id, sub.map(f))
       case WaitingPar(sub)     => WaitingPar(sub.map(f))
     }
@@ -152,7 +152,8 @@ object ResumeOp {
               case Left(err)    => CompletedStep.error(CantDecodePayload(err.message))
               case Right(value) => CompletedStep.feed(step, Free.pure(value))
             }
-          case other => CompletedStep.pure(Free.liftF(other))
+          case other =>
+            CompletedStep.pure(Free.liftF(other))
         }
     }
   }

@@ -45,7 +45,7 @@ object test {
       (29, stepGen),
       (1, Gen.const(IO.raiseError(new RuntimeException("Oops"))))
     )
-  } yield step(name, effect, compensateEffect)
+  } yield step(name, effect, _ => compensateEffect)
 
   def serialStepsGen(size: Int): Gen[Workflow[Unit]] = for {
     first <- workflowGen(size)

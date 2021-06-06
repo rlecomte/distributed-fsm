@@ -21,6 +21,13 @@ case object CantCompensateState extends StateError
 case object NoResult extends StateError
 case class VersionConflict(expected: Version, current: Version) extends StateError
 
+sealed trait WorkflowOutcome[O] {
+  val runId: RunId
+}
+case class ProcessCancelled[O](runId: RunId) extends WorkflowOutcome[O]
+case class ProccessFailed[O](runId: RunId, err: Throwable) extends WorkflowOutcome[O]
+case class ProcessSucceeded[O](runId: RunId, value: O) extends WorkflowOutcome[O]
+
 object WorkflowRuntime {
 
   def start[I, O](store: EventStore, fsm: FSM[I, O], input: I)(implicit
@@ -35,13 +42,13 @@ object WorkflowRuntime {
 
   def startSync[I, O](store: EventStore, fsm: FSM[I, O], input: I)(implicit
       encoder: Encoder[I]
-  ): IO[(RunId, O)] = {
+  ): IO[WorkflowOutcome[O]] = {
     start(store, fsm, input)(encoder).flatMap { case (runId, fib) =>
-      fib.join.flatMap {
-        _.fold(
-          IO.raiseError(new RuntimeException("Cancelled")),
-          IO.raiseError,
-          _.map((runId, _))
+      fib.join.flatMap { outcome =>
+        outcome.fold(
+          IO.pure(ProcessCancelled(runId)),
+          err => IO.pure(ProccessFailed(runId, err)),
+          eff => eff.map(ProcessSucceeded(runId, _))
         )
       }
     }
@@ -68,13 +75,13 @@ object WorkflowRuntime {
       runId: RunId
   )(implicit
       decoder: Decoder[I]
-  ): IO[Either[StateError, O]] = resume(store, fsm, runId).flatMap {
+  ): IO[Either[StateError, WorkflowOutcome[O]]] = resume(store, fsm, runId).flatMap {
     case Right(fib) =>
       fib.join.flatMap { outcome =>
         outcome.fold(
-          IO.raiseError(new RuntimeException("Cancelled")),
-          IO.raiseError,
-          _.map(Right(_))
+          IO.pure(Right(ProcessCancelled(runId))),
+          err => IO.pure(Right(ProccessFailed(runId, err))),
+          eff => eff.map(v => Right(ProcessSucceeded(runId, v)))
         )
       }
 
@@ -96,13 +103,13 @@ object WorkflowRuntime {
   private def launchCompensation[I, O](
       store: EventStore,
       runId: RunId,
-      compensations: List[Step[_]],
+      compensations: List[Compensation],
       version: Version
   ): IO[Either[StateError, Unit]] =
     EventLogger.logCompensationStarted(store, runId, version).flatMap {
       case Right(_) =>
         compensations
-          .foldMap(s => compensateStep(store, runId, s.name, s.compensate))
+          .foldMap(s => compensateStep(store, runId, s.stepName, s.eff))
           .attempt
           .flatMap {
             case Right(_) => EventLogger.logCompensationCompleted(store, runId).void

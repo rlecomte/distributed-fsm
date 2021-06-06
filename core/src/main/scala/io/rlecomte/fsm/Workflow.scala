@@ -14,6 +14,7 @@ import cats.~>
 import io.circe.Decoder
 import io.circe.Encoder
 import io.circe.Json
+import io.rlecomte.fsm.runtime.CantDecodePayload
 
 object Workflow {
 
@@ -28,7 +29,7 @@ object Workflow {
   case class Step[A](
       name: String,
       effect: IO[(Json, A)],
-      compensate: IO[Unit] = IO.unit,
+      compensate: Json => IO[Unit],
       retryStrategy: RetryStrategy,
       circeDecoder: Decoder[A]
   ) extends WorkflowOp[A]
@@ -50,11 +51,23 @@ object Workflow {
   def step[A](
       name: String,
       effect: IO[A],
-      compensate: IO[Unit] = IO.unit,
+      compensate: A => IO[Unit] = (_: A) => IO.unit,
       retryStrategy: RetryStrategy = NoRetry
   )(implicit encoder: Encoder[A], decoder: Decoder[A]): Workflow[A] = {
+
+    val compensation: Json => IO[Unit] = p => {
+      IO.fromEither(decoder.decodeJson(p).left.map(err => CantDecodePayload(err.message)))
+        .flatMap(compensate)
+    }
+
     liftF[WorkflowOp, A](
-      Step(name, effect.map(r => (encoder(r), r)), compensate, retryStrategy, decoder)
+      Step(
+        name,
+        effect.map(r => (encoder(r), r)),
+        compensation,
+        retryStrategy,
+        decoder
+      )
     )
   }
 

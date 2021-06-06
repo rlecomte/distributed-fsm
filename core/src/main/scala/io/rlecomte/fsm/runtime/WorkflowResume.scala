@@ -11,8 +11,9 @@ import io.rlecomte.fsm.store.Version
 
 object WorkflowResume {
 
+  final case class Compensation(stepName: String, eff: IO[Unit])
   final case class ResumeRunPayload[I, O](version: Version, workflow: Workflow[O])
-  final case class CompensateRunPayload(version: Version, step: List[Step[_]])
+  final case class CompensateRunPayload(version: Version, step: List[Compensation])
 
   sealed trait ResumeState[A]
   object ResumeState {
@@ -20,16 +21,16 @@ object WorkflowResume {
     case class Started[A](
         paths: Map[EventId, EventId],
         workflow: Free[ResumeOp, A],
-        executedSteps: List[Step[_]]
+        executedSteps: List[Compensation]
     ) extends ResumeState[A]
     case class Completed[A](
         value: A,
-        executedSteps: List[Step[_]]
+        executedSteps: List[Compensation]
     ) extends ResumeState[A]
     case class Failed[A](
         paths: Map[EventId, EventId],
         workflow: Free[ResumeOp, A],
-        executedSteps: List[Step[_]]
+        executedSteps: List[Compensation]
     ) extends ResumeState[A]
     case class CompensationStarted[A](executedSteps: List[Step[_]]) extends ResumeState[A]
     case class CompensationFailed[A](executedSteps: List[Step[_]]) extends ResumeState[A]
@@ -120,12 +121,12 @@ object WorkflowResume {
         }
       case StepStarted(_, _) => Right(state)
       case StepFailed(_, _)  => Right(state)
-      case p @ StepCompleted(_, _, correlationId, _) =>
+      case p @ StepCompleted(_, payload, correlationId, _) =>
         state.workflow.resume match {
           case Left(op) =>
             val result =
               ResumeOp
-                .completedStep(1, p, traceIds(state.paths, correlationId), op)
+                .completedStep(0, p, traceIds(state.paths, correlationId), op)
                 .map(_.flatten)
                 .run(None)
 
@@ -133,13 +134,14 @@ object WorkflowResume {
               case Right((Some(step), updatedWorkflow)) =>
                 Right(
                   state.copy(
-                    executedSteps = step :: state.executedSteps,
+                    executedSteps =
+                      Compensation(step.name, step.compensate(payload)) :: state.executedSteps,
                     workflow = updatedWorkflow
                   )
                 )
 
               case Right((None, _)) =>
-                Left(IncoherentState("A completed step doesn't exist."))
+                Left(IncoherentState(s"A completed step doesn't exist : $p"))
 
               case Left(err) => Left(err)
             }

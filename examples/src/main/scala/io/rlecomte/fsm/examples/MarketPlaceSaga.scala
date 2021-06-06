@@ -6,19 +6,33 @@ import cats.effect.IOApp
 import io.circe.Decoder
 import io.circe.Encoder
 import io.rlecomte.fsm.FSM
+import io.rlecomte.fsm.runtime.ProccessFailed
+import io.rlecomte.fsm.runtime.ProcessCancelled
+import io.rlecomte.fsm.runtime.ProcessSucceeded
 import io.rlecomte.fsm.runtime.WorkflowRuntime
 import io.rlecomte.fsm.store.InMemoryEventStore
+
+import scala.util.Random
 
 object MarketPlaceSaga extends IOApp {
 
   object PaymentService {
 
-    def executePayment(): IO[Unit] = IO(println("execute payment"))
+    case class PaymentId(value: Int)
 
-    def cancelPayment(): IO[Unit] = IO(println("cancel payment"))
+    object PaymentId {
+      implicit val paymentIdEncoder: Encoder[PaymentId] = Encoder.encodeInt.contramap(_.value)
+
+      implicit val paymentIdDecoder: Decoder[PaymentId] = Decoder.decodeInt.map(PaymentId.apply)
+    }
+
+    def executePayment(): IO[PaymentId] = IO(println("execute payment")).map(_ => PaymentId(1))
+
+    def cancelPayment(paymentId: PaymentId): IO[Unit] = IO(println(s"cancel payment $paymentId"))
   }
 
   object OrderService {
+    import PaymentService.PaymentId
 
     case class OrderId(value: Int)
 
@@ -28,9 +42,10 @@ object MarketPlaceSaga extends IOApp {
       implicit val orderIdDecoder: Decoder[OrderId] = Decoder.decodeInt.map(OrderId.apply)
     }
 
-    def createOrder(): IO[OrderId] = IO(println("create order")).map(_ => OrderId(1))
+    def createOrder(paymentId: PaymentId): IO[OrderId] =
+      IO(println(s"create order with paymentId $paymentId")).map(_ => OrderId(1))
 
-    def cancelOrder(): IO[Unit] = IO(println("cancel order"))
+    def cancelOrder(orderId: OrderId): IO[Unit] = IO(println(s"cancel order $orderId"))
 
     def concludeOrder(id: OrderId): IO[Unit] = IO(println(s"conclude order $id"))
   }
@@ -38,7 +53,14 @@ object MarketPlaceSaga extends IOApp {
   object StockService {
     import OrderService._
 
-    def prepareOrder(id: OrderId): IO[Unit] = IO(println(s"prepare order $id"))
+    def prepareOrder(id: OrderId): IO[Unit] = {
+      IO(println(s"prepare order $id")).flatMap { _ =>
+        IO(Random.nextBoolean()).flatMap {
+          case false => IO.unit
+          case true  => IO.raiseError(new RuntimeException("prepare order failed!"))
+        }
+      }
+    }
 
     def cancelPreparation(id: OrderId): IO[Unit] = IO(println(s"cancel preparation for order $id"))
   }
@@ -57,35 +79,46 @@ object MarketPlaceSaga extends IOApp {
     import OrderService._
 
     val marketPlaceWorkflow =
-      FSM[Unit, OrderId](
-        "market place saga",
-        { _ =>
-          for {
-            _ <- step("payment", PaymentService.executePayment(), PaymentService.cancelPayment())
+      FSM.define[Unit, OrderId]("market place saga") { _ =>
+        for {
+          paymentId <- step(
+            "payment",
+            PaymentService.executePayment(),
+            paymentId => PaymentService.cancelPayment(paymentId)
+          )
 
-            orderId <- step("create order", OrderService.createOrder(), OrderService.cancelOrder())
+          orderId <- step(
+            "create order",
+            OrderService.createOrder(paymentId),
+            orderId => OrderService.cancelOrder(orderId)
+          )
 
-            _ <- step(
-              "book stock",
-              StockService.prepareOrder(orderId),
-              StockService.cancelPreparation(orderId)
-            )
+          _ <- step(
+            "prepare order",
+            StockService.prepareOrder(orderId),
+            (_: Unit) => StockService.cancelPreparation(orderId)
+          )
 
-            _ <- step(
-              "deliver order",
-              DeliveryService.deliverOrder(orderId),
-              DeliveryService.cancelDelivery(orderId)
-            )
+          _ <- step(
+            "deliver order",
+            DeliveryService.deliverOrder(orderId),
+            (_: Unit) => DeliveryService.cancelDelivery(orderId)
+          )
 
-            _ <- step("conclude order", OrderService.concludeOrder(orderId))
-          } yield orderId
-        }
-      )
+          _ <- step("conclude order", OrderService.concludeOrder(orderId))
+        } yield orderId
+      }
   }
 
   override def run(args: List[String]): IO[ExitCode] = for {
     store <- InMemoryEventStore.newStore
     result <- WorkflowRuntime.startSync(store, MarketPlace.marketPlaceWorkflow, ())
-    _ <- IO(println(s"Order ${result._2} created."))
+    _ <- result match {
+      case ProccessFailed(runId, _) =>
+        IO(println("order creation failed. Proceed to compensation : ")) *> WorkflowRuntime
+          .compensate(store, MarketPlace.marketPlaceWorkflow, runId)
+      case ProcessCancelled(_)          => IO.unit
+      case ProcessSucceeded(_, orderId) => IO(println(s"Order $orderId created."))
+    }
   } yield ExitCode.Success
 }
