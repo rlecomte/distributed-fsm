@@ -3,6 +3,9 @@ package io.rlecomte.fsm
 import cats.data.WriterT
 import cats.effect.IO
 import cats.implicits._
+import io.circe.Codec
+import io.circe.Decoder
+import io.circe.Encoder
 import io.rlecomte.fsm.FSM
 import io.rlecomte.fsm.RunId
 import io.rlecomte.fsm.Workflow._
@@ -82,14 +85,18 @@ object test {
       workflow: Workflow[Unit],
       actions: List[List[Action]]
   ): IO[ExecutedActions] = for {
-    (runId, fib) <- WorkflowRuntime.start(store, FSM[Unit, Unit]("test", _ => workflow), ())
+    fib <- WorkflowRuntime.start(
+      store,
+      FSM[Unit, Unit]("test", _ => workflow, Codec.from(Decoder[Unit], Encoder[Unit])),
+      ()
+    )
     _ <- fib.join
     actions <- actions.parTraverse { workerAction =>
       workerAction
         .foldMapM[WriterT[IO, List[Action], *], Unit] { action =>
           WriterT
             .liftF[IO, List[Action], Either[StateError, Unit]](
-              runAction(store, workflow, runId, action)
+              runAction(store, workflow, fib.runId, action)
             )
             .map {
               case Right(_) => WriterT.tell[IO, List[Action]](List(action))
@@ -99,7 +106,7 @@ object test {
         .run
         .map(_._1)
     }
-  } yield ExecutedActions(runId, actions)
+  } yield ExecutedActions(fib.runId, actions)
 
   def runAction(
       store: EventStore,
@@ -109,9 +116,13 @@ object test {
   ): IO[Either[StateError, Unit]] = action match {
     case Resume =>
       WorkflowRuntime
-        .resumeSync(store, FSM[Unit, Unit]("test", _ => workflow), runId)
+        .resume(
+          store,
+          FSM[Unit, Unit]("test", _ => workflow, Codec.from(Decoder[Unit], Encoder[Unit])),
+          runId
+        )
         .flatMap {
-          case Right(v)  => IO.pure(Right(v))
+          case Right(v)  => v.join
           case Left(err) => IO.pure(Left(err))
         }
         .attempt
@@ -119,7 +130,15 @@ object test {
 
     case Compensate =>
       WorkflowRuntime
-        .compensate(store, FSM[Unit, Unit]("test", _ => workflow), runId)
+        .compensate(
+          store,
+          FSM[Unit, Unit]("test", _ => workflow, Codec.from(Decoder[Unit], Encoder[Unit])),
+          runId
+        )
+        .flatMap {
+          case Right(v)  => v.join
+          case Left(err) => IO.pure(Left(err))
+        }
         .attempt
         .as(Right(()))
   }

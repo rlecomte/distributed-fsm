@@ -3,7 +3,6 @@ package io.rlecomte.fsm.runtime
 import cats.effect.FiberIO
 import cats.effect.IO
 import cats.implicits._
-import io.circe.Decoder
 import io.circe.Encoder
 import io.rlecomte.fsm.EventId
 import io.rlecomte.fsm.FSM
@@ -21,47 +20,48 @@ case object CantCompensateState extends StateError
 case object NoResult extends StateError
 case class VersionConflict(expected: Version, current: Version) extends StateError
 
-sealed trait WorkflowOutcome[O] {
-  val runId: RunId
+case class WorkflowFiber[O](runId: RunId, fiber: FiberIO[O]) {
+
+  val join: IO[WorkflowOutcome[O]] =
+    fiber.join.flatMap { outcome =>
+      outcome.fold(
+        IO.pure(ProcessCancelled),
+        err => IO.pure(ProcessFailed(err)),
+        eff => eff.map(ProcessSucceeded(_))
+      )
+    }
 }
-case class ProcessCancelled[O](runId: RunId) extends WorkflowOutcome[O]
-case class ProccessFailed[O](runId: RunId, err: Throwable) extends WorkflowOutcome[O]
-case class ProcessSucceeded[O](runId: RunId, value: O) extends WorkflowOutcome[O]
+sealed trait WorkflowOutcome[+O] {
+
+  def fold[B](canceled: => B, errored: Throwable => B, completed: O => B): B =
+    this match {
+      case ProcessCancelled    => canceled
+      case ProcessFailed(e)    => errored(e)
+      case ProcessSucceeded(v) => completed(v)
+    }
+}
+case object ProcessCancelled extends WorkflowOutcome[Nothing]
+case class ProcessFailed[O](err: Throwable) extends WorkflowOutcome[O]
+case class ProcessSucceeded[O](value: O) extends WorkflowOutcome[O]
 
 object WorkflowRuntime {
 
-  def start[I, O](store: EventStore, fsm: FSM[I, O], input: I)(implicit
-      encoder: Encoder[I]
-  ): IO[(RunId, FiberIO[O])] = {
+  def start[I, O](store: EventStore, fsm: FSM[I, O], input: I): IO[WorkflowFiber[O]] = {
     for {
       runId <- RunId.newRunId
-      r <- launch(store, runId, fsm.name, input, fsm.workflow(input), Version.empty)
+      r <- launch(store, runId, fsm.name, input, fsm.workflow(input), Version.empty)(
+        fsm.inputCodec
+      )
         .flatMap(IO.fromEither)
-    } yield (runId, r)
-  }
-
-  def startSync[I, O](store: EventStore, fsm: FSM[I, O], input: I)(implicit
-      encoder: Encoder[I]
-  ): IO[WorkflowOutcome[O]] = {
-    start(store, fsm, input)(encoder).flatMap { case (runId, fib) =>
-      fib.join.flatMap { outcome =>
-        outcome.fold(
-          IO.pure(ProcessCancelled(runId)),
-          err => IO.pure(ProccessFailed(runId, err)),
-          eff => eff.map(ProcessSucceeded(runId, _))
-        )
-      }
-    }
+    } yield r
   }
 
   def resume[I, O](
       store: EventStore,
       fsm: FSM[I, O],
       runId: RunId
-  )(implicit
-      decoder: Decoder[I]
-  ): IO[Either[StateError, FiberIO[O]]] = {
-    WorkflowResume.resumeRun(store, runId, fsm).flatMap {
+  ): IO[Either[StateError, WorkflowFiber[O]]] = {
+    WorkflowResume.resumeRun(store, runId, fsm)(fsm.inputCodec).flatMap {
       case Left(err) =>
         IO.pure(Left(err))
       case Right(ResumeRunPayload(version, workflow)) =>
@@ -69,31 +69,12 @@ object WorkflowRuntime {
     }
   }
 
-  def resumeSync[I, O](
-      store: EventStore,
-      fsm: FSM[I, O],
-      runId: RunId
-  )(implicit
-      decoder: Decoder[I]
-  ): IO[Either[StateError, WorkflowOutcome[O]]] = resume(store, fsm, runId).flatMap {
-    case Right(fib) =>
-      fib.join.flatMap { outcome =>
-        outcome.fold(
-          IO.pure(Right(ProcessCancelled(runId))),
-          err => IO.pure(Right(ProccessFailed(runId, err))),
-          eff => eff.map(v => Right(ProcessSucceeded(runId, v)))
-        )
-      }
-
-    case Left(err) => IO.pure(Left(err))
-  }
-
   def compensate[I, O](
       store: EventStore,
       fsm: FSM[I, O],
       runId: RunId
-  )(implicit decoder: Decoder[I]): IO[Either[StateError, Unit]] = {
-    WorkflowResume.compensate(store, runId, fsm).flatMap {
+  ): IO[Either[StateError, WorkflowFiber[Unit]]] = {
+    WorkflowResume.compensate(store, runId, fsm)(fsm.inputCodec).flatMap {
       case Left(err) => IO.pure(Left(err))
       case Right(CompensateRunPayload(version, steps)) =>
         launchCompensation[I, O](store, runId, steps, version)
@@ -105,7 +86,7 @@ object WorkflowRuntime {
       runId: RunId,
       compensations: List[Compensation],
       version: Version
-  ): IO[Either[StateError, Unit]] =
+  ): IO[Either[StateError, WorkflowFiber[Unit]]] =
     EventLogger.logCompensationStarted(store, runId, version).flatMap {
       case Right(_) =>
         compensations
@@ -115,7 +96,8 @@ object WorkflowRuntime {
             case Right(_) => EventLogger.logCompensationCompleted(store, runId).void
             case Left(e)  => EventLogger.logCompensationFailed(store, runId) *> IO.raiseError(e)
           }
-          .map(Right(_))
+          .start
+          .map(fib => Right(WorkflowFiber(runId, fib)))
 
       case Left(err) => IO.pure(Left(err))
     }
@@ -144,7 +126,7 @@ object WorkflowRuntime {
       input: I,
       workflow: Workflow[O],
       version: Version
-  )(implicit encoder: Encoder[I]): IO[Either[StateError, FiberIO[O]]] =
+  )(implicit encoder: Encoder[I]): IO[Either[StateError, WorkflowFiber[O]]] =
     EventLogger.logWorkflowStarted(store, name, runId, input, version)(encoder).flatMap {
       case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
 
@@ -156,7 +138,7 @@ object WorkflowRuntime {
       runId: RunId,
       workflow: Workflow[O],
       version: Version
-  ): IO[Either[StateError, FiberIO[O]]] =
+  ): IO[Either[StateError, WorkflowFiber[O]]] =
     EventLogger.logWorkflowResumed(store, runId, version).flatMap {
       case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
 
@@ -168,7 +150,7 @@ object WorkflowRuntime {
       runId: RunId,
       parentId: EventId,
       workflow: Workflow[O]
-  ): IO[Either[StateError, FiberIO[O]]] = {
+  ): IO[Either[StateError, WorkflowFiber[O]]] = {
     val runner = new WorkflowIO(runId, store)
 
     workflow
@@ -179,7 +161,7 @@ object WorkflowRuntime {
         case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
       }
       .start
-      .map(Right(_))
+      .map(fib => Right(WorkflowFiber(runId, fib)))
   }
 
   //def feed(fsm: FSM[_, _], token: SuspendToken, payload: Json): IO[Unit] = ???

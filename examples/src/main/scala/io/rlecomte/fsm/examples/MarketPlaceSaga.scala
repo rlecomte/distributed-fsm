@@ -6,8 +6,8 @@ import cats.effect.IOApp
 import io.circe.Decoder
 import io.circe.Encoder
 import io.rlecomte.fsm.FSM
-import io.rlecomte.fsm.runtime.ProccessFailed
 import io.rlecomte.fsm.runtime.ProcessCancelled
+import io.rlecomte.fsm.runtime.ProcessFailed
 import io.rlecomte.fsm.runtime.ProcessSucceeded
 import io.rlecomte.fsm.runtime.WorkflowRuntime
 import io.rlecomte.fsm.store.InMemoryEventStore
@@ -79,7 +79,7 @@ object MarketPlaceSaga extends IOApp {
     import OrderService._
 
     val marketPlaceWorkflow =
-      FSM.define[Unit, OrderId]("market place saga") { _ =>
+      FSM.define_[OrderId]("market place saga") {
         for {
           paymentId <- step(
             "payment",
@@ -112,13 +112,14 @@ object MarketPlaceSaga extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] = for {
     store <- InMemoryEventStore.newStore
-    result <- WorkflowRuntime.startSync(store, MarketPlace.marketPlaceWorkflow, ())
+    fib <- WorkflowRuntime.start(store, MarketPlace.marketPlaceWorkflow, ())
+    result <- fib.join
     _ <- result match {
-      case ProccessFailed(runId, _) =>
+      case ProcessFailed(_) =>
         IO(println("order creation failed. Proceed to compensation : ")) *> WorkflowRuntime
-          .compensate(store, MarketPlace.marketPlaceWorkflow, runId)
-      case ProcessCancelled(_)          => IO.unit
-      case ProcessSucceeded(_, orderId) => IO(println(s"Order $orderId created."))
+          .compensate(store, MarketPlace.marketPlaceWorkflow, fib.runId)
+      case ProcessCancelled          => IO.unit
+      case ProcessSucceeded(orderId) => IO(println(s"Order $orderId created."))
     }
   } yield ExitCode.Success
 }
