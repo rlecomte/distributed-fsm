@@ -7,7 +7,7 @@ import cats.implicits._
 import io.circe.syntax._
 import io.rlecomte.fsm.FSM
 import io.rlecomte.fsm.runtime.ProcessSucceeded
-import io.rlecomte.fsm.runtime.WorkflowRuntime
+import io.rlecomte.fsm.store.EventStore
 import io.rlecomte.fsm.store.InMemoryEventStore
 
 object SuspendableWorkflow extends IOApp {
@@ -40,35 +40,52 @@ object SuspendableWorkflow extends IOApp {
     (askFirstnameAndWait, askLastnameAndWait, askPhoneAndWait).mapN(PersonnalInformation.apply)
   }
 
-  val getDataFromStdin = for {
-    store <- InMemoryEventStore.newStore
-    runId <- WorkflowRuntime.start(store, program, ()).flatMap(r => r.join.as(r.runId))
+  def getDataFromStdin(store: EventStore) = for {
+    runId <- program.startEmpty(store).flatMap(r => r.join.as(r.runId))
+
     _ <- IO.consoleForIO.readLine
-      .flatMap(firstname =>
-        WorkflowRuntime.feedAndResume(store, runId, "firstname", firstname.asJson, program)
-      )
-      .flatMap(_.traverse(_.join))
+      .map(_.asJson)
+      .flatMap(program.feedAndResumeOrFail(store, runId, "firstname"))
+      .flatMap(_.join)
+
     _ <- IO.consoleForIO.readLine
-      .flatMap(lastname =>
-        WorkflowRuntime.feedAndResume(store, runId, "lastname", lastname.asJson, program)
-      )
-      .flatMap(_.traverse(_.join))
+      .map(_.asJson)
+      .flatMap(program.feedAndResumeOrFail(store, runId, "lastname"))
+      .flatMap(_.join)
+
     r <- IO.consoleForIO.readLine
-      .flatMap(phone => WorkflowRuntime.feedAndResume(store, runId, "phone", phone.asJson, program))
+      .map(_.asJson)
+      .flatMap(program.feedAndResumeOrFail(store, runId, "phone"))
+      .flatMap(_.join)
 
     info <- r match {
-      case Right(fib) =>
-        fib.join.flatMap {
-          case ProcessSucceeded(value) => IO.pure(value)
-          case _                       => IO.raiseError(new RuntimeException("Data should be return."))
+      case ProcessSucceeded(value) => IO.pure(value)
+      case _                       => IO.raiseError(new RuntimeException("Data should be return."))
+    }
+  } yield info
 
-        }
-      case _ => IO.raiseError(new RuntimeException("Data should be return."))
+  def builtInData(store: EventStore) = for {
+    runId <- program.startEmpty(store).flatMap(r => r.join.as(r.runId))
+
+    _ <- (
+      program.feed(store, runId, "firstname")("Romain".asJson),
+      program.feed(store, runId, "lastname")("Lecomte".asJson),
+      program.feed(store, runId, "phone")("000000000".asJson)
+    ).tupled
+
+    r <- program.resumeOrFail(store, runId).flatMap(_.join)
+
+    info <- r match {
+      case ProcessSucceeded(value) => IO.pure(value)
+      case v                       => IO.raiseError(new RuntimeException(s"Data should be return. $v"))
     }
   } yield info
 
   override def run(args: List[String]): IO[ExitCode] = for {
-    data <- getDataFromStdin
-    _ <- IO.consoleForIO.println(s"Result : $data")
+    store <- InMemoryEventStore.newStore
+    //data <- getDataFromStdin(store)
+    //_ <- IO.consoleForIO.println(s"Stdin Result : $data")
+    dataBuiltIn <- builtInData(store)
+    _ <- IO.consoleForIO.println(s"Builtin Result : $dataBuiltIn")
   } yield ExitCode.Success
 }
