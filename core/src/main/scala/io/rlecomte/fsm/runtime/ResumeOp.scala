@@ -7,6 +7,7 @@ import cats.free.Free
 import cats.free.FreeApplicative
 import cats.implicits._
 import cats.~>
+import io.circe.Json
 import io.rlecomte.fsm.Workflow.WorkflowOp
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
@@ -31,9 +32,17 @@ object ResumeOp {
     }
   }
 
+  type FeedPar[A] = Either[StateError, FreeApplicative[IndexedResume, A]]
+
+  object FeedPar {
+    implicit val feedParApplicative: Applicative[FeedPar] =
+      Applicative[Either[StateError, *]].compose[FreeApplicative[IndexedResume, *]]
+  }
+
   final case class IndexedResume[A](parNum: Int, workflow: Free[ResumeOp, A])
 
   final case class ResumeStep[A](sub: Step[A]) extends ResumeOp[A]
+  final case class ResumeAsyncStep[A](sub: AsyncStep[A]) extends ResumeOp[A]
   final case class RunningPar[A](id: EventId, sub: FreeApplicative[IndexedResume, A])
       extends ResumeOp[A]
   final case class WaitingPar[A](sub: FreeApplicative[IndexedResume, A]) extends ResumeOp[A]
@@ -42,8 +51,9 @@ object ResumeOp {
     def map[A, B](fa: ResumeOp[A])(f: A => B): ResumeOp[B] = fa match {
       case ResumeStep(Step(n, e, r, c, d)) =>
         ResumeStep(Step(n, e.map { case (j, p) => (j, f(p)) }, r, c, d.map(f)))
-      case RunningPar(id, sub) => RunningPar(id, sub.map(f))
-      case WaitingPar(sub)     => WaitingPar(sub.map(f))
+      case ResumeAsyncStep(AsyncStep(s, t, p)) => ResumeAsyncStep(AsyncStep(s, t, p.map(f)))
+      case RunningPar(id, sub)                 => RunningPar(id, sub.map(f))
+      case WaitingPar(sub)                     => WaitingPar(sub.map(f))
     }
   }
 
@@ -58,6 +68,8 @@ object ResumeOp {
       WaitingPar(pstepz)
 
     case s @ Step(_, _, _, _, _) => ResumeStep(s)
+
+    case s @ AsyncStep(_, _, _) => ResumeAsyncStep(s)
   }
 
   val fromResumeOp: ResumeOp ~> WorkflowOp = λ[ResumeOp ~> WorkflowOp] {
@@ -80,6 +92,8 @@ object ResumeOp {
       FromPar(pstepz)
 
     case ResumeStep(s) => s
+
+    case ResumeAsyncStep(s) => s
   }
 
   def parStarted[A](
@@ -108,6 +122,69 @@ object ResumeOp {
           case WaitingPar(sub) if parNum == payload.parNum => RunningPar(eventId, sub)
           case other                                       => other
         }
+    }
+  }
+
+  def feed[A](
+      feeds: Map[String, Json],
+      op: ResumeOp[A]
+  ): Either[StateError, Free[ResumeOp, A]] = {
+    op match {
+      case RunningPar(id, subWorkflow) =>
+        val subz =
+          subWorkflow.foldMap(
+            λ[IndexedResume ~> FeedPar] { fa =>
+              fa.workflow.resume match {
+                case Left(op) =>
+                  feed(feeds, op)
+                    .map(_.flatten)
+                    .map(fb => FreeApplicative.lift(IndexedResume(fa.parNum, fb)))
+                case Right(v) => Right(FreeApplicative.pure(v))
+              }
+            }
+          )(FeedPar.feedParApplicative)
+
+        subz.map(freeApp =>
+          freeApp.compile(λ[IndexedResume ~> Free[ResumeOp, *]](_.workflow)).fold.resume match {
+            case Left(_)  => Free.liftF(RunningPar(id, freeApp))
+            case Right(v) => Free.pure(v)
+          }
+        )
+
+      case WaitingPar(subWorkflow) =>
+        val subz =
+          subWorkflow.foldMap(
+            λ[IndexedResume ~> FeedPar] { fa =>
+              fa.workflow.resume match {
+                case Left(op) =>
+                  feed(feeds, op)
+                    .map(_.flatten)
+                    .map(fb => FreeApplicative.lift(IndexedResume(fa.parNum, fb)))
+                case Right(v) => Right(FreeApplicative.pure(v))
+              }
+            }
+          )(FeedPar.feedParApplicative)
+
+        subz.map(freeApp =>
+          freeApp.compile(λ[IndexedResume ~> Free[ResumeOp, *]](_.workflow)).fold.resume match {
+            case Left(_)  => Free.liftF(WaitingPar(freeApp))
+            case Right(v) => Free.pure(v)
+          }
+        )
+
+      case s @ ResumeAsyncStep(step) =>
+        feeds
+          .get(step.token)
+          .map[Either[StateError, Free[ResumeOp, A]]] { payload =>
+            step.circeDecoder.decodeJson(payload) match {
+              case Left(err)    => Left(CantDecodePayload(err.message))
+              case Right(value) => Right(Free.pure(value))
+            }
+          }
+          .getOrElse(Right(Free.liftF(s)))
+
+      case s @ ResumeStep(_) =>
+        Right(Free.liftF(s))
     }
   }
 

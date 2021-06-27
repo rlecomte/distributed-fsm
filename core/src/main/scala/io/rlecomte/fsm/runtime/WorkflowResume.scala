@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.free.Free
 import cats.implicits._
 import io.circe.Decoder
+import io.circe.Json
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
 import io.rlecomte.fsm.store.EventStore
@@ -21,7 +22,14 @@ object WorkflowResume {
     case class Started[A](
         paths: Map[EventId, EventId],
         workflow: Free[ResumeOp, A],
-        executedSteps: List[Compensation]
+        executedSteps: List[Compensation],
+        feeded: Map[String, Json]
+    ) extends ResumeState[A]
+    case class Suspended[A](
+        paths: Map[EventId, EventId],
+        workflow: Free[ResumeOp, A],
+        executedSteps: List[Compensation],
+        feeded: Map[String, Json]
     ) extends ResumeState[A]
     case class Completed[A](
         value: A,
@@ -30,7 +38,8 @@ object WorkflowResume {
     case class Failed[A](
         paths: Map[EventId, EventId],
         workflow: Free[ResumeOp, A],
-        executedSteps: List[Compensation]
+        executedSteps: List[Compensation],
+        feeded: Map[String, Json]
     ) extends ResumeState[A]
     case class CompensationStarted[A](executedSteps: List[Step[_]]) extends ResumeState[A]
     case class CompensationFailed[A](executedSteps: List[Step[_]]) extends ResumeState[A]
@@ -46,7 +55,10 @@ object WorkflowResume {
       fsm: FSM[I, O]
   ): IO[Either[StateError, ResumeRunPayload[I, O]]] = {
     loadState(backend, runId, fsm).map(_.flatMap {
-      case (Failed(_, workflow, _), version) =>
+      case (Failed(_, workflow, _, _), version) =>
+        val resumedWorkflow = workflow.compile(ResumeOp.fromResumeOp)
+        Right(ResumeRunPayload(version, resumedWorkflow))
+      case (Suspended(_, workflow, _, _), version) =>
         val resumedWorkflow = workflow.compile(ResumeOp.fromResumeOp)
         Right(ResumeRunPayload(version, resumedWorkflow))
       case _ => Left(CantResumeState)
@@ -59,7 +71,9 @@ object WorkflowResume {
       fsm: FSM[I, O]
   ): IO[Either[StateError, CompensateRunPayload]] = {
     loadState(backend, runId, fsm).map(_.flatMap {
-      case (Failed(_, _, steps), version) =>
+      case (Failed(_, _, steps, _), version) =>
+        Right(CompensateRunPayload(version, steps))
+      case (Suspended(_, _, steps, _), version) =>
         Right(CompensateRunPayload(version, steps))
       case (Completed(_, steps), version) =>
         Right(CompensateRunPayload(version, steps))
@@ -85,13 +99,14 @@ object WorkflowResume {
       event: Event
   )(implicit decoder: Decoder[I]): Either[StateError, ResumeState[O]] =
     state match {
-      case Init()                  => init(fsm, event)
-      case s @ Started(_, _, _)    => started(s, event)
-      case Completed(_, _)         => completed(event)
-      case s @ Failed(_, _, _)     => failed(s, event)
-      case CompensationStarted(_)  => compensationStarted(event)
-      case CompensationFailed(_)   => compensationFailed(event)
-      case CompensationCompleted() => compensationCompleted(event)
+      case Init()                    => init(fsm, event)
+      case s @ Started(_, _, _, _)   => started(s, event)
+      case s @ Suspended(_, _, _, _) => suspended(s, event)
+      case Completed(_, _)           => completed(event)
+      case s @ Failed(_, _, _, _)    => failed(s, event)
+      case CompensationStarted(_)    => compensationStarted(event)
+      case CompensationFailed(_)     => compensationFailed(event)
+      case CompensationCompleted()   => compensationCompleted(event)
     }
 
   def init[I, O](fsm: FSM[I, O], event: Event)(implicit
@@ -102,7 +117,7 @@ object WorkflowResume {
         for {
           i <- decoder.decodeJson(input).leftMap(e => CantDecodePayload(e.message))
           w = fsm.workflow(i).compile(ResumeOp.toResumeOp)
-        } yield Started(Map.empty, w, Nil)
+        } yield Started(Map.empty, w, Nil, Map.empty)
       case evt => Left(IncoherentState(s"Oops : $evt"))
     }
   }
@@ -150,14 +165,62 @@ object WorkflowResume {
             Left(IncoherentState("workflow completed but diverge from event source."))
         }
 
+      case AsyncStepFeeded(token, payload) =>
+        val feededUpdated = state.feeded + ((token, payload))
+        state.workflow.resume match {
+          case Left(op) =>
+            ResumeOp.feed(feededUpdated, op).map { updatedWorkflow =>
+              state.copy(feeded = feededUpdated, workflow = updatedWorkflow.flatten)
+            }
+          case Right(_) => //continue
+            Right(state.copy(feeded = feededUpdated))
+        }
+
+      case AsyncStepSuspended(_) =>
+        state.workflow.resume match {
+          case Left(op) =>
+            ResumeOp.feed(state.feeded, op).map { updatedWorkflow =>
+              state.copy(workflow = updatedWorkflow.flatten)
+            }
+          case Right(_) =>
+            Left(IncoherentState("workflow is completed but event source is suspended."))
+        }
+
+      case WorkflowSuspended =>
+        Right(Suspended(state.paths, state.workflow, state.executedSteps, state.feeded))
+
       case WorkflowCompleted =>
         state.workflow.resume match {
           case Left(_)  => Left(IncoherentState("workflow isn't completed but event source is."))
           case Right(v) => Right(Completed(v, state.executedSteps))
         }
 
-      case WorkflowFailed => Right(Failed(state.paths, state.workflow, state.executedSteps))
-      case evt            => Left(IncoherentState(s"Oops : $evt"))
+      case WorkflowFailed =>
+        Right(Failed(state.paths, state.workflow, state.executedSteps, state.feeded))
+
+      case evt => Left(IncoherentState(s"Oops : $evt"))
+    }
+  }
+
+  def suspended[A](state: Suspended[A], event: Event): Either[StateError, ResumeState[A]] = {
+    event.payload match {
+      case AsyncStepFeeded(token, payload) =>
+        val feededUpdated = state.feeded + ((token, payload))
+        state.workflow.resume match {
+          case Left(op) =>
+            ResumeOp.feed(feededUpdated, op).map { updatedWorkflow =>
+              state.copy(feeded = feededUpdated, workflow = updatedWorkflow.flatten)
+            }
+          case Right(_) => //continue
+            Right(state.copy(feeded = feededUpdated))
+        }
+
+      case io.rlecomte.fsm.CompensationStarted => Right(CompensationStarted(Nil))
+
+      case io.rlecomte.fsm.WorkflowResumed =>
+        Right(Started(state.paths, state.workflow, state.executedSteps, state.feeded))
+
+      case evt => Left(IncoherentState(s"Oops : $evt"))
     }
   }
 
@@ -170,9 +233,19 @@ object WorkflowResume {
 
   def failed[A](state: Failed[A], event: Event): Either[StateError, ResumeState[A]] =
     event.payload match {
+      case AsyncStepFeeded(token, payload) =>
+        val feededUpdated = state.feeded + ((token, payload))
+        state.workflow.resume match {
+          case Left(op) =>
+            ResumeOp.feed(feededUpdated, op).map { updatedWorkflow =>
+              state.copy(feeded = feededUpdated, workflow = updatedWorkflow.flatten)
+            }
+          case Right(_) => //continue
+            Right(state.copy(feeded = feededUpdated))
+        }
       case io.rlecomte.fsm.CompensationStarted => Right(CompensationStarted(Nil))
       case io.rlecomte.fsm.WorkflowResumed =>
-        Right(Started(state.paths, state.workflow, state.executedSteps))
+        Right(Started(state.paths, state.workflow, state.executedSteps, state.feeded))
       case evt => Left(IncoherentState(s"Oops : $evt"))
     }
 

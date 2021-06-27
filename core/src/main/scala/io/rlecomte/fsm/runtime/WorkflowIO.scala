@@ -1,43 +1,61 @@
 package io.rlecomte.fsm.runtime
 
-import cats.Parallel
+import cats.Applicative
 import cats.arrow.FunctionK
+import cats.data.EitherT
+import cats.data.Validated
 import cats.effect.IO
+import cats.effect.implicits._
 import cats.effect.kernel.Par
+import cats.implicits._
 import io.rlecomte.fsm.Workflow._
 import io.rlecomte.fsm._
 import io.rlecomte.fsm.store.EventStore
 
 class WorkflowIO(runId: RunId, backend: EventStore) {
 
-  def foldIO(parentId: EventId, parNum: Int): FunctionK[WorkflowOp, IO] =
-    new FunctionK[WorkflowOp, IO] {
-      override def apply[A](op: WorkflowOp[A]): IO[A] = op match {
+  type Eff[A] = EitherT[IO, Unit, A]
+  type ParEff[A] = IO.Par[Validated[Unit, A]]
+
+  val parEffApp = Applicative[IO.Par].compose(Applicative[Validated[Unit, *]])
+
+  def foldIO(parentId: EventId, parNum: Int): FunctionK[WorkflowOp, Eff] =
+    new FunctionK[WorkflowOp, Eff] {
+      override def apply[A](op: WorkflowOp[A]): Eff[A] = op match {
         case step @ Step(_, _, _, _, _) =>
-          processStep(step, parentId, parNum)
+          EitherT.liftF(processStep(step, parentId, parNum))
+
+        case AsyncStep(_, token, _) =>
+          EitherT[IO, Unit, A](
+            EventLogger.logStepSuspended(backend, runId, token).map(_ => Left[Unit, A](()))
+          )
 
         case FromPar(par) => {
           def subGraph(parentId: EventId) = {
-            Par.ParallelF.value(
-              par
-                .foldMap {
-                  parFoldIO(parentId)
-                }(Parallel[IO, IO.Par].applicative)
-            )
+            Par.ParallelF
+              .value(
+                par
+                  .foldMap {
+                    parFoldIO(parentId)
+                  }(parEffApp)
+              )
+              .map(_.toEither)
           }
 
           for {
-            parentId <- EventLogger.logParStarted(backend, runId, parentId, parNum)
-            result <- subGraph(parentId)
+            parentId <- EitherT.liftF(EventLogger.logParStarted(backend, runId, parentId, parNum))
+            result <- EitherT(subGraph(parentId))
           } yield result
         }
       }
     }
 
-  private def parFoldIO(parentId: EventId): FunctionK[IndexedWorkflow, IO.Par] =
-    new FunctionK[IndexedWorkflow, IO.Par] {
-      override def apply[A](w: IndexedWorkflow[A]): IO.Par[A] =
-        Par.ParallelF(w.workflow.foldMap(foldIO(parentId, w.parNum)))
+  private def parFoldIO(parentId: EventId): FunctionK[IndexedWorkflow, ParEff] =
+    new FunctionK[IndexedWorkflow, ParEff] {
+      override def apply[A](w: IndexedWorkflow[A]): ParEff[A] = {
+        val subProcess = w.workflow.foldMap(foldIO(parentId, w.parNum))
+        Par.ParallelF(subProcess.value.map(_.toValidated))
+      }
     }
 
   private def processStep[A](
