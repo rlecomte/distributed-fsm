@@ -4,6 +4,7 @@ import cats.effect.FiberIO
 import cats.effect.IO
 import cats.implicits._
 import io.circe.Encoder
+import io.circe.Json
 import io.rlecomte.fsm.EventId
 import io.rlecomte.fsm.FSM
 import io.rlecomte.fsm.RunId
@@ -20,28 +21,34 @@ case object CantCompensateState extends StateError
 case object NoResult extends StateError
 case class VersionConflict(expected: Version, current: Version) extends StateError
 
-case class WorkflowFiber[O](runId: RunId, fiber: FiberIO[O]) {
+case class WorkflowFiber[O](runId: RunId, fiber: FiberIO[Either[Unit, O]]) {
 
   val join: IO[WorkflowOutcome[O]] =
     fiber.join.flatMap { outcome =>
       outcome.fold(
         IO.pure(ProcessCancelled),
         err => IO.pure(ProcessFailed(err)),
-        eff => eff.map(ProcessSucceeded(_))
+        eff =>
+          eff.map {
+            case Left(_)  => ProcessSuspended
+            case Right(v) => ProcessSucceeded(v)
+          }
       )
     }
 }
 sealed trait WorkflowOutcome[+O] {
 
-  def fold[B](canceled: => B, errored: Throwable => B, completed: O => B): B =
+  def fold[B](canceled: => B, errored: Throwable => B, suspended: => B, completed: O => B): B =
     this match {
       case ProcessCancelled    => canceled
       case ProcessFailed(e)    => errored(e)
+      case ProcessSuspended    => suspended
       case ProcessSucceeded(v) => completed(v)
     }
 }
 case object ProcessCancelled extends WorkflowOutcome[Nothing]
 case class ProcessFailed[O](err: Throwable) extends WorkflowOutcome[O]
+case object ProcessSuspended extends WorkflowOutcome[Nothing]
 case class ProcessSucceeded[O](value: O) extends WorkflowOutcome[O]
 
 object WorkflowRuntime {
@@ -93,8 +100,9 @@ object WorkflowRuntime {
           .foldMap(s => compensateStep(store, runId, s.stepName, s.eff))
           .attempt
           .flatMap {
-            case Right(_) => EventLogger.logCompensationCompleted(store, runId).void
-            case Left(e)  => EventLogger.logCompensationFailed(store, runId) *> IO.raiseError(e)
+            case Right(_) =>
+              EventLogger.logCompensationCompleted(store, runId).as(Either.right[Unit, Unit](()))
+            case Left(e) => EventLogger.logCompensationFailed(store, runId) *> IO.raiseError(e)
           }
           .start
           .map(fib => Right(WorkflowFiber(runId, fib)))
@@ -128,7 +136,7 @@ object WorkflowRuntime {
       version: Version
   )(implicit encoder: Encoder[I]): IO[Either[StateError, WorkflowFiber[O]]] =
     EventLogger.logWorkflowStarted(store, name, runId, input, version)(encoder).flatMap {
-      case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
+      case Right(parentId) => startWorkflow(store, runId, parentId, workflow).map(Right(_))
 
       case Left(err) => IO.pure(Left(err))
     }
@@ -140,7 +148,7 @@ object WorkflowRuntime {
       version: Version
   ): IO[Either[StateError, WorkflowFiber[O]]] =
     EventLogger.logWorkflowResumed(store, runId, version).flatMap {
-      case Right(parentId) => startWorkflow(store, runId, parentId, workflow)
+      case Right(parentId) => startWorkflow(store, runId, parentId, workflow).map(Right(_))
 
       case Left(err) => IO.pure(Left(err))
     }
@@ -150,19 +158,33 @@ object WorkflowRuntime {
       runId: RunId,
       parentId: EventId,
       workflow: Workflow[O]
-  ): IO[Either[StateError, WorkflowFiber[O]]] = {
+  ): IO[WorkflowFiber[O]] = {
     val runner = new WorkflowIO(runId, store)
 
     workflow
       .foldMap(runner.foldIO(parentId, 0))
+      .value
       .attempt
       .flatMap {
-        case Right(a) => EventLogger.logWorkflowCompleted(store, runId).as(a)
-        case Left(e)  => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
+        case Right(Right(v)) => EventLogger.logWorkflowCompleted(store, runId).as(Right(v))
+        case Right(Left(_))  => EventLogger.logWorkflowSuspended(store, runId).as(Left(()))
+        case Left(e)         => EventLogger.logWorkflowFailed(store, runId) *> IO.raiseError(e)
       }
       .start
-      .map(fib => Right(WorkflowFiber(runId, fib)))
+      .map(fib => WorkflowFiber(runId, fib))
   }
 
-  //def feed(fsm: FSM[_, _], token: SuspendToken, payload: Json): IO[Unit] = ???
+  def feed(store: EventStore, runId: RunId, token: String, payload: Json): IO[Unit] = {
+    EventLogger.logWorkflowFeeded(store, runId, token, payload).void
+  }
+
+  def feedAndResume[I, O](
+      store: EventStore,
+      runId: RunId,
+      token: String,
+      payload: Json,
+      fsm: FSM[I, O]
+  ): IO[Either[StateError, WorkflowFiber[O]]] = {
+    feed(store, runId, token, payload).flatMap(_ => resume(store, fsm, runId))
+  }
 }

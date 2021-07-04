@@ -33,6 +33,8 @@ object Workflow {
       retryStrategy: RetryStrategy,
       circeDecoder: Decoder[A]
   ) extends WorkflowOp[A]
+  case class AsyncStep[A](name: String, token: String, circeDecoder: Decoder[A])
+      extends WorkflowOp[A]
   case class FromPar[A](pstep: FreeApplicative[IndexedWorkflow, A]) extends WorkflowOp[A]
 
   case class IndexedWorkflow[A](parNum: Int, workflow: Workflow[A])
@@ -41,6 +43,8 @@ object Workflow {
     override def map[A, B](fa: WorkflowOp[A])(f: A => B): WorkflowOp[B] = fa match {
       case Step(name, effect, compensate, retryStrategy, circeDecoder) =>
         Step(name, effect.map(t => (t._1, f(t._2))), compensate, retryStrategy, circeDecoder.map(f))
+
+      case AsyncStep(name, token, circeDecoder) => AsyncStep(name, token, circeDecoder.map(f))
 
       case FromPar(pstep) => FromPar(pstep.map(f))
     }
@@ -69,6 +73,10 @@ object Workflow {
         decoder
       )
     )
+  }
+
+  def asyncStep[A](name: String, token: String)(implicit decoder: Decoder[A]): Workflow[A] = {
+    liftF[WorkflowOp, A](AsyncStep(name, token, decoder))
   }
 
   def fromPar[A](par: ParWorkflow[A]): Workflow[A] = {

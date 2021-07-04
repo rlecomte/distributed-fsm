@@ -9,6 +9,7 @@ import io.rlecomte.fsm.FSM
 import io.rlecomte.fsm.runtime.ProcessCancelled
 import io.rlecomte.fsm.runtime.ProcessFailed
 import io.rlecomte.fsm.runtime.ProcessSucceeded
+import io.rlecomte.fsm.runtime.ProcessSuspended
 import io.rlecomte.fsm.runtime.WorkflowRuntime
 import io.rlecomte.fsm.store.InMemoryEventStore
 
@@ -119,6 +120,7 @@ object MarketPlaceSaga extends IOApp {
         IO(println("order creation failed. Proceed to compensation : ")) *> WorkflowRuntime
           .compensate(store, MarketPlace.marketPlaceWorkflow, fib.runId)
       case ProcessCancelled          => IO.unit
+      case ProcessSuspended          => IO.unit
       case ProcessSucceeded(orderId) => IO(println(s"Order $orderId created."))
     }
   } yield ExitCode.Success

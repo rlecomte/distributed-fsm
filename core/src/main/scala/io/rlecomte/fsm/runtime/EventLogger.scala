@@ -25,6 +25,11 @@ object EventLogger {
       runId: RunId
   ): IO[EventId] = backend.unsafeRegisterEvent(runId, WorkflowCompleted)
 
+  def logWorkflowSuspended(
+      backend: EventStore,
+      runId: RunId
+  ): IO[EventId] = backend.unsafeRegisterEvent(runId, WorkflowSuspended)
+
   def logWorkflowResumed(
       backend: EventStore,
       runId: RunId,
@@ -132,5 +137,23 @@ object EventLogger {
   ): IO[EventId] = backend.unsafeRegisterEvent(
     runId,
     CompensationCompleted
+  )
+  def logStepSuspended(
+      backend: EventStore,
+      runId: RunId,
+      token: String
+  ): IO[EventId] = backend.unsafeRegisterEvent(
+    runId,
+    AsyncStepSuspended(token)
+  )
+
+  def logWorkflowFeeded(
+      backend: EventStore,
+      runId: RunId,
+      token: String,
+      payload: Json
+  ): IO[EventId] = backend.unsafeRegisterEvent(
+    runId,
+    AsyncStepFeeded(token, payload)
   )
 }
